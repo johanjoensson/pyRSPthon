@@ -1,0 +1,28 @@
+[project]
+name = "pyRSPthon"
+version="0.0.1"
+authors=[{name="Johan Jönsson", email="johanjoensson@gmail.com"}]
+description="A package containing things useful for working with the full potential linear muffin tin orbital density functional theory (FP-LMTO DFT) code RSPt."
+readme="README.md"
+requires-python=">=3.7"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+license = "GPL-3.0-or-later"
+license-files = ["LICEN[CS]E*"]
+
+[project-urls]
+Homepage=""
+Issues=""
+
+[build-system]
+requires = ["setuptools >= 77.0.3", "numpy >= 2.0.0", "scipy >= 1.0.0"]
+build-backend = "setuptools.build_meta"
+
+[project.scripts]
+plot_dos="scripts.plot_dos:main"
+plot_pdos="scripts.plot_pdos:main"
+plot_band="scripts.plot_band:main"
+plot_pband="scripts.plot_pband:main"
+plot_dat="scripts.plot_dat:main"
