@@ -1,4 +1,4 @@
-from rspt_utils.read import read, green
+from pyRSPthon.read import read, green
 import numpy as np
 import matplotlib.pyplot as plt
 from argparse import ArgumentParser

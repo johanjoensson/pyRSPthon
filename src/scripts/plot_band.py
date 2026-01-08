@@ -1,5 +1,5 @@
-from rspt_utils.read import band
-from rspt_utils.read import green
+from pyRSPthon.read import band
+from pyRSPthon.read import green
 import matplotlib.pyplot as plt
 import matplotlib.colors as mc
 from matplotlib import rc

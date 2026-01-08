@@ -1,4 +1,4 @@
-from rspt_utils.read import extract_pdos
+from pyRSPthon.read import extract_pdos
 import numpy as np
 import matplotlib.pyplot as plt
 from argparse import ArgumentParser
