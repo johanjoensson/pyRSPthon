@@ -10,13 +10,14 @@ def get_band(nk, ne, prefix="."):
         data = f.read()
 
     n_data = (len(data) // 4) // (nk * ne)
-    band = np.empty((ne, nk, n_data), dtype="f")
-    for d in range(0, len(data), 4 * n_data):
-        row = (d // (4 * n_data)) % ne
-        col = (d // (4 * n_data)) // ne
-        band[row, col] = np.frombuffer(data[d : d + n_data * 4], dtype="f")
+    band = np.frombuffer(data, dtype="f").reshape((nk, ne, n_data), order="C")
+    # band = np.empty((ne, nk, n_data), dtype="f")
+    # for d in range(0, len(data), 4 * n_data):
+    #     row = (d // (4 * n_data)) % ne
+    #     col = (d // (4 * n_data)) // ne
+    #     band[row, col] = np.frombuffer(data[d : d + n_data * 4], dtype="f")
 
-    return band
+    return np.transpose(band, (1, 0, 2))
 
 
 def get_pband(nk, ne, cluster, prefix="."):
@@ -28,10 +29,11 @@ def get_pband(nk, ne, cluster, prefix="."):
         data = f.read()
 
     n_data = (len(data) // 4) // (nk * ne)
-    pband = np.empty((ne, nk, n_data), dtype="f")
-    for d in range(0, len(data), 4 * n_data):
-        row = (d // (4 * n_data)) % ne
-        col = (d // (4 * n_data)) // ne
-        pband[row, col] = np.frombuffer(data[d : d + n_data * 4], dtype="f")
+    pband = np.frombuffer(data, dtype="f").reshape((nk, ne, n_data), order="C")
+    # pband = np.empty((ne, nk, n_data), dtype="f")
+    # for d in range(0, len(data), 4 * n_data):
+    #     row = (d // (4 * n_data)) % ne
+    #     col = (d // (4 * n_data)) // ne
+    #     pband[row, col] = np.frombuffer(data[d : d + n_data * 4], dtype="f")
 
-    return pband
+    return np.transpose(pband, (1, 0, 2))

@@ -122,6 +122,20 @@ def run(
     plt.colorbar(pad=0.05, spacing="uniform")
     plt.ylabel(f"E - E$_F$ ({energy_unit})")
     plt.show(block=True)
+    for i in range(orb_start):
+        plt.imshow(
+            bp[::-1, :, i] - np.min(bp[:, :, i]),
+            extent=(1, num_k, emin, emax),
+            aspect="auto",
+            cmap="Blues_r",
+        )
+        plt.hlines(y=0, xmin=1, xmax=num_k, linestyle="dotted", color="gray")
+        plt.vlines(x=xticks, ymin=emin, ymax=emax, linestyle="dotted", color="gray")
+        plt.xlim(left=1, right=num_k)
+        plt.xticks(xticks, labels)
+        plt.colorbar(pad=0.05, spacing="uniform")
+        plt.ylabel(f"E - E$_F$ ({energy_unit})")
+        plt.show(block=True)
 
     orbital_character = np.empty((bp.shape[0], bp.shape[1], 5), dtype=float)
     orbital_character[:, :, 0] = np.sum(bp[:, :, [orb_start, orb_start + 5]], axis=2)

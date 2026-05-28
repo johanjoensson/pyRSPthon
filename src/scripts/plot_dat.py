@@ -175,7 +175,7 @@ def run(cluster, data, directory, eV):
         try:
             green_dat = green.get_green(prefix=directory)
             eV = "eV" in green_dat.spectrum
-        except FileNotFoundError:
+        except FileNotFoundError, TypeError:
             pass
     e_unit = "eV" if eV else "Ry"
 
