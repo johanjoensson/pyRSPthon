@@ -1,5 +1,5 @@
 """
-Collection of functions for running single RSPt steps and the calculations.
+Collection of functions for running single RSPt steps and checking the output.
 """
 
 import subprocess
@@ -32,6 +32,8 @@ def check_reset_fields(fields: list[str], t: int, e: int, l: int):
         l = int(fields[1])
     elif len(fields) == 9:
         l = int(fields[0])
+    else:
+        return t, e, l
     if fields[-3] == "*":
         raise RuntimeError(f"Node reset flag for type {t}  energy set {e} and l {l}")
     return t, e, l
@@ -44,6 +46,8 @@ def check_fourier_arguments(fields: list[str]):
     ===========
     fields: list[str] - fields to check
     """
+    if not fields:
+        return
     if int(fields[-1]) <= 5:
         raise RuntimeError(
             f"Fourier mesh is not dense enough. Fourier argument is {fields[-1]}."
@@ -60,12 +64,12 @@ def check_boundary_densities(
     fields: list[str] - fields to check
     t: int  - type
     h: int  - harmonic
-    density: float - current MT density
+    mt_density: float - current MT density
     Returns:
     ========
     t: int - Type checked
     h: int - Harmonics checked
-    density: float - MT density to check
+    mt_density: float - MT density to check
     """
     tol = max_boundary_mismatch if h <= h_max else 0.1
     if len(fields) == 5:
@@ -103,6 +107,35 @@ def check_core_leakage(fields: list[str], t: int, max_core_leakage: float):
         raise RuntimeError(f"Core leakage for type {t} is large: {leakage} electrons.")
 
 
+def check_overlapping_muffin_tins(fields: list[str], ta: int):
+    """
+    Check for overlapping muffin tins
+    Arguments:
+    ==========
+    fields: list[str] - fields to check
+    ta: int - type a
+    """
+    tb = None
+    two_s_over_d = None
+    if len(fields) == 8:
+        ta = int(fields[0])
+        tb = int(fields[1])
+        two_s_over_d = float(fields[3])
+    elif len(fields) == 7:
+        tb = int(fields[0])
+        two_s_over_d = float(fields[2])
+    if two_s_over_d is not None and two_s_over_d > 1.0:
+        raise RuntimeError(
+            f"Overlapping muffin tin spheres for type {ta} and type {tb}, 2S/d = {two_s_over_d}"
+        )
+    return ta
+
+
+# The full line continues "min_{b+R} |b+R-a|, |b+R-a| < 1.1 (min|R|=...)" where
+# the min|R| value is system specific, so only match the prefix.
+_NEIGHBOR_TABLE_TRIGGER = "Nearest neighbors: min_{b+R}"
+
+
 def check_rspt_run(h_max: int, max_boundary_mismatch: float, max_core_leakage: float):
     """
     Check an RSPt run for common errors.
@@ -129,10 +162,7 @@ def check_rspt_run(h_max: int, max_boundary_mismatch: float, max_core_leakage: f
         for line in f:
             if "TIME: COUNTN" in line:
                 check_overlapping_mt = False
-            if (
-                "Nearest neighbors: min_{b+R} |b+R-a|, |b+R-a| < 1.1 (min|R|=12.9767491)"
-                in line
-            ):
+            if _NEIGHBOR_TABLE_TRIGGER in line:
                 check_overlapping_mt = True
                 for _ in range(2):
                     line = next(f)
@@ -174,103 +204,108 @@ def check_rspt_run(h_max: int, max_boundary_mismatch: float, max_core_leakage: f
                 check_core_leakage(line.strip().split(), t, max_core_leakage)
 
 
-def check_overlapping_muffin_tins(fields: list[str], ta: int):
+def follow_lines(fname: str, proc: subprocess.Popen, poll_interval: float = 0.5):
     """
-    Check for overlapping muffin tins
-    Arguments:
-    ==========
-    fields: list[str] - fields to check
-    ta: int - type a
+    Yield complete lines from fname as they are written (like tail -f).
+    Stops when proc has exited and no more data is available.
     """
-    tb = None
-    two_s_over_d = None
-    if len(fields) == 8:
-        ta = int(fields[0])
-        tb = int(fields[1])
-        two_s_over_d = float(fields[3])
-    elif len(fields) == 7:
-        tb = int(fields[0])
-        two_s_over_d = float(fields[2])
-    if two_s_over_d > 1.0:
-        raise RuntimeError(
-            f"Overlapping muffin tin spheres for type {ta} and type {tb}, 2S/d = {two_s_over_d}"
-        )
-    return ta
+    while not os.path.exists(fname):
+        if proc.poll() is not None:
+            return
+        time.sleep(poll_interval)
+    with open(fname, "rt") as f:
+        buf = ""
+        while True:
+            chunk = f.readline()
+            if chunk:
+                buf += chunk
+                if buf.endswith("\n"):
+                    yield buf
+                    buf = ""
+                continue
+            if proc.poll() is not None:
+                if buf:
+                    yield buf
+                return
+            time.sleep(poll_interval)
 
 
-def check_early_fail():
-    reset_checked = False
+def check_early_fail(proc: subprocess.Popen):
+    """
+    Watch the out file while RSPt is running and fail fast on fatal setup
+    errors (energy-parameter reset flags, overlapping muffin tins).
+    Returns once the energy-parameter section has been checked (TIME: setene)
+    or when the RSPt process exits.
+    """
+    check_reset = False
+    check_overlapping_mt = False
     t = 0
     e = 0
     l = -1
-    # Wait until we have checked all the reset fields
-    while not reset_checked:
-        check_reset = False
-        check_overlapping_mt = False
-        with open("out", "rt") as f:
-            try:
-                for line in f:
-                    if "TIME: COUNTN" in line:
-                        check_overlapping_mt = False
-                    if (
-                        "Nearest neighbors: min_{b+R} |b+R-a|, |b+R-a| < 1.1 (min|R|=12.9767491)"
-                        in line
-                    ):
-                        check_overlapping_mt = True
-                        for _ in range(2):
-                            line = next(f)
-                    if check_overlapping_mt:
-                        t = check_overlapping_muffin_tins(line.strip().split(), t)
+    lines = follow_lines("out", proc)
+    for line in lines:
+        if "TIME: COUNTN" in line:
+            check_overlapping_mt = False
+        if _NEIGHBOR_TABLE_TRIGGER in line:
+            check_overlapping_mt = True
+            for _ in range(2):
+                line = next(lines, "")
+        if check_overlapping_mt:
+            t = check_overlapping_muffin_tins(line.strip().split(), t)
 
-                    if "TIME: setene" in line:
-                        reset_checked = True
-                        check_reset = False
-                        break
-                    if "Energy parameters" in line:
-                        check_reset = True
-                        for _ in range(4):
-                            line = next(f)
-                    if check_reset:
-                        t, e, l = check_reset_fields(line.strip().split(), t, e, l)
-            except StopIteration:
-                check_reset = False
-                check_overlapping_mt = False
-                reset_checked = False
-        time.sleep(0.5)
+        if "TIME: setene" in line:
+            return
+        if "Energy parameters" in line:
+            check_reset = True
+            for _ in range(4):
+                line = next(lines, "")
+        if check_reset:
+            t, e, l = check_reset_fields(line.strip().split(), t, e, l)
 
 
 def run_rspt(rspt_binary: list[str], run_prefix: list[str], check_rspt: bool, **kwargs):
     """
-    rspt_binary: str - Name of the RSPt executable to run (usually "rspt")
-    run_prefix: str - Commands used to launch the RSPt binary (ex. "mpirun -n 64" or "srun -n 128 -c 2")
-    **kwargs        - Arguments passed on to check_rspt_run
+    Run one RSPt cycle and check its output.
+    Parameters:
+    ===========
+    rspt_binary: list[str] - The RSPt executable to run (usually ["rspt"])
+    run_prefix: list[str]  - Launcher command (ex. ["mpirun", "-n", "64"])
+    check_rspt: bool       - Run check_rspt_run on the out file afterwards
+    **kwargs               - Arguments passed on to check_rspt_run
     """
+    old_handler = signal.getsignal(signal.SIGTERM)
+    proc = None
 
-    with subprocess.Popen(run_prefix + rspt_binary) as proc:
-        # Handle SIGTERM signals by aborting all execution
-        def handler(signum, _):
-            signame = signal.Signals(signum).name
-            print(f"Signal {signame} ({signum}) received.")
-            print("Terminating execution.")
+    # Forward SIGTERM (e.g. from a batch system hitting its walltime) to RSPt
+    # as SIGINT so it can shut down gracefully.
+    def handler(signum, _):
+        signame = signal.Signals(signum).name
+        print(f"Signal {signame} ({signum}) received.")
+        print("Terminating execution.")
+        if proc is not None:
             proc.send_signal(signal.SIGINT)
 
-        signal.signal(signal.SIGTERM, handler)
+    signal.signal(signal.SIGTERM, handler)
+    try:
+        proc = subprocess.Popen(run_prefix + rspt_binary)
         try:
-            # Wait until the out file is created
-            while not os.path.exists("out"):
-                time.sleep(0.5)
-
-            # Early exit if reset fields are set
-            check_early_fail()
-        except Exception as err:
+            check_early_fail(proc)
+            returncode = proc.wait()
+        except BaseException:
             proc.send_signal(signal.SIGINT)
-            proc.kill()
-            raise err  #  from None
-        # proc.wait()
-        err = proc.poll()
-        if err:
-            raise RuntimeError(
-                f"RSPt command {run_prefix} {rspt_binary} failed! Returned vaues was {err}."
-            )
+            try:
+                proc.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
+            raise
+    finally:
+        signal.signal(signal.SIGTERM, old_handler)
+
+    if returncode:
+        raise RuntimeError(
+            f"RSPt command {' '.join(run_prefix + rspt_binary)} failed! "
+            f"Return value was {returncode}."
+        )
     if check_rspt:
         check_rspt_run(**kwargs)

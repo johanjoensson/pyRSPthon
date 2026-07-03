@@ -1,29 +1,50 @@
+[build-system]
+requires = ["setuptools >= 77.0.3"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "pyRSPthon"
-version="0.0.1"
-authors=[{name="Johan Jönsson", email="johanjoensson@gmail.com"}]
-description="A package containing things useful for working with the full potential linear muffin tin orbital density functional theory (FP-LMTO DFT) code RSPt."
-readme="README.md"
-requires-python=">=3.7"
+version = "0.1.0"
+authors = [{ name = "Johan Jönsson", email = "johanjoensson@gmail.com" }]
+description = "Utilities for setting up, running and analyzing calculations with the FP-LMTO DFT(+DMFT) code RSPt."
+readme = "README.md"
+requires-python = ">=3.10"
 classifiers = [
     "Programming Language :: Python :: 3",
     "Operating System :: OS Independent",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Physics",
 ]
 license = "GPL-3.0-or-later"
 license-files = ["LICEN[CS]E*"]
+dependencies = [
+    "numpy >= 1.22",
+    "scipy >= 1.8",
+    "matplotlib >= 3.5",
+    "ase >= 3.22",
+]
 
-[project-urls]
-Homepage=""
-Issues=""
+[project.optional-dependencies]
+symmetry = ["spglib >= 2.0"]
+kpoints = ["kpLib"]
+test = ["pytest"]
 
-[build-system]
-requires = ["setuptools >= 77.0.3", "numpy >= 2.0.0", "scipy >= 1.0.0"]
-build-backend = "setuptools.build_meta"
+[project.urls]
+Homepage = "https://github.com/johanjoensson/rspt_utils"
+Issues = "https://github.com/johanjoensson/rspt_utils/issues"
 
 [project.scripts]
-plot_dos="scripts.plot_dos:main"
-plot_pdos="scripts.plot_pdos:main"
-plot_band="scripts.plot_band:main"
-plot_pband="scripts.plot_pband:main"
-plot_dat="scripts.plot_dat:main"
-py_runs="scripts.py_runs:main"
+plot_dos = "pyRSPthon.cli.plot_dos:main"
+plot_pdos = "pyRSPthon.cli.plot_pdos:main"
+plot_band = "pyRSPthon.cli.plot_band:main"
+plot_pband = "pyRSPthon.cli.plot_pband:main"
+plot_dat = "pyRSPthon.cli.plot_dat:main"
+py_runs = "pyRSPthon.cli.py_runs:main"
+rspt_structure = "pyRSPthon.cli.rspt_structure:main"
+rspt_kpts = "pyRSPthon.cli.rspt_kpts:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

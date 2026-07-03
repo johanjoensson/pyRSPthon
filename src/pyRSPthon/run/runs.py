@@ -1,13 +1,14 @@
-import subprocess
 import shutil
 import os
 import datetime
 import glob
-import sys
+import logging
 import time
+from dataclasses import dataclass
 
 from . import run_rspt
 
+logger = logging.getLogger("pyRSPthon.runs")
 
 start_files = ["pot", "eparm"]
 # Files for continuing an RSPt run
@@ -15,68 +16,111 @@ last_files = start_files + ["sig"]
 # Files used for mixing
 jacob_files = ["jacob1", "jacob2"]
 
+# Same divergence guard as the original runs.c (FSQMAX)
+FSQ_MAX = 1.0e8
 
-def init_runs():
+# Abort files: "stopruns" is what the original runs.c reads, "stop" is kept
+# for backwards compatibility with earlier versions of this driver.
+STOP_FILES = ("stop", "stopruns")
+
+
+@dataclass
+class RunState:
+    """Convergence state of an SCF run."""
+
+    fsq: float = float("inf")
+    etot: float = float("inf")
+    it: int = 0
+    ucvol: float = float("nan")
+    efermi: float = float("nan")
+
+
+def setup_logging(verbose: bool = False):
     """
-    Reads convergence data from the file "convergence", if it exists
-    and sets fsq, total energy and iteration number accordingly.
-    Also prepares the file pot, eparm and (potentially) sig, if the matching _last files exist.
-    If convergence, pot_last  and eparm_last are present, continue an SCF run.
-    Otherwise attempt to restart from pot, eparm, sig (if they exist)
-    If that fails start from atomdens
-    Return:
+    Log to the console and to runs.info. Safe to call more than once.
+    """
+    logger.setLevel(logging.DEBUG)
+    if not logger.handlers:
+        console = logging.StreamHandler()
+        console.setFormatter(logging.Formatter("%(message)s"))
+        logfile = logging.FileHandler("runs.info")
+        logfile.setFormatter(logging.Formatter("%(asctime)s %(message)s"))
+        logger.addHandler(console)
+        logger.addHandler(logfile)
+    for handler in logger.handlers:
+        if isinstance(handler, logging.StreamHandler) and not isinstance(
+            handler, logging.FileHandler
+        ):
+            handler.setLevel(logging.DEBUG if verbose else logging.INFO)
+
+
+def read_convergence():
+    """
+    Read data from the convergence file (written by RSPt each cycle;
+    single line: fsq  iteration  etotal  unit-cell-volume  fermi-energy).
+    Returns:
+    ========
+    RunState
+    Raises:
     =======
-    fsq: float    - Value of fsq from last iteration (inf if no previous iteration)
-    last_w: float - Total energy from last iteration (inf if no previous iteration)
-    it: int       - Number of the last iteration (0 if no previous iteration)
+    FileNotFoundError if the convergence file does not exist.
     """
-    # If we have a pot_last, eparm_last or sig_last file,
-    # we should continue a previous SCF run
-    try:
-        fsq, last_e, it, _, _ = read_convergence()
-        # Make backups of existing files
-        for file in last_files:
-            if os.path.exists(file):
-                shutil.copy(file, f"{file}.bak")
+    with open("convergence", "rt") as f:
+        fields = f.readline().split()
+    return RunState(
+        fsq=float(fields[0]),
+        it=int(fields[1]),
+        etot=float(fields[2]),
+        ucvol=float(fields[3]),
+        efermi=float(fields[4]),
+    )
 
-        for file in last_files:
-            shutil.copy(f"{file}_last", file)
-        # The backups are no longer needed
-        # because we were able to properly copy files from a previous SCF run
-        for file in last_files:
-            if os.path.exists(f"{file}.bak"):
-                os.remove(f"{file}.bak")
-    # Otherwise: start fresh.
-    # Remove any existing (leftover) "*_last" files and "jacob*" files
+
+def init_runs() -> RunState:
+    """
+    Prepare the working directory for an SCF run.
+
+    If a convergence file exists this is a continuation: restore the state
+    files (pot, eparm, sig) from their *_last backups where those exist, and
+    keep the convergence data. Existing state is never deleted in this path.
+
+    Without a convergence file, start fresh: remove leftover *_last, jacob*
+    files, and require pot/eparm to be present either both or neither.
+
+    Returns:
+    ========
+    RunState - state from the last iteration (defaults if starting fresh)
+    """
+    try:
+        state = read_convergence()
     except FileNotFoundError:
+        # Fresh start: clear leftovers from any previous run
         for file in last_files:
             if os.path.exists(f"{file}_last"):
-                print(f"Removing {file}_last")
+                logger.info(f"Removing {file}_last")
                 os.remove(f"{file}_last")
         for file in jacob_files:
             if os.path.exists(file):
-                print(f"Removing {file}")
+                logger.info(f"Removing {file}")
                 os.remove(file)
-        if os.path.exists("convergence"):
-            print("Removing convergence")
-            os.remove("convergence")
-
-        fsq = float("inf")
-        last_e = float("inf")
-        it = 0
-        # Restore any files backed up above
-        for file in last_files:
-            if os.path.exists(f"{file}.bak"):
-                print(f"restoring {file}")
-                shutil.move(f"{file}.bak", file)
-        # Ensure we have both pot and eparm
+        # Ensure we have either both pot and eparm, or neither
         if not all(os.path.exists(file) for file in start_files) and any(
             os.path.exists(file) for file in start_files
         ):
+            present = tuple(file for file in start_files if os.path.exists(file))
             raise RuntimeError(
-                f"To start a SCF calculation we need either BOTH pot and eparm, or NEITHER pot nor eparm nor sig.\nThe following files are present {tuple(file for file in start_files if os.path.exists(file))}"
+                "To start a SCF calculation we need either BOTH pot and eparm, "
+                "or NEITHER pot nor eparm nor sig.\n"
+                f"The following files are present: {present}"
             )
-    return fsq, last_e, it
+        return RunState()
+
+    # Continuation: restore state files from their _last backups where present.
+    # sig_last only exists for DMFT runs; its absence is not an error.
+    for file in last_files:
+        if os.path.exists(f"{file}_last"):
+            shutil.copy(f"{file}_last", file)
+    return state
 
 
 def setup_savedir():
@@ -92,32 +136,6 @@ def setup_savedir():
         offset = len(glob.glob(f"{savedir}-*")) + 1
         shutil.move(savedir, f"{savedir}-{offset}")
     return savedir
-
-
-def read_convergence():
-    """
-    Read data from convergence file
-    Returns:
-    ========
-    fsq: float - FSQ from convergence file (inf if no convergence file)
-    etot: float - Total energy from convergence file (inf if no convergence file)
-    last_it: int - iteration number from convergence file (0 if no convergence file)
-    unit_cell_volume: float - volume of the unit cell from the last run
-    fermi_energy: float - Fermi energy from the last run
-    Raises:
-    =======
-    FileNotFoundError if the convergence file does not exist.
-    """
-    with open("convergence", "rt") as f:
-        line = f.read()
-        fields = line.split()
-        fsq = float(fields[0])
-        last_iter = int(fields[1])
-        etot = float(fields[2])
-        unit_cell_volume = float(fields[3])
-        fermi_energy = float(fields[4])
-
-    return fsq, etot, last_iter, unit_cell_volume, fermi_energy
 
 
 def converged(fsq, delta_e, fsq_conv, e_conv, verbose=False):
@@ -136,10 +154,28 @@ def converged(fsq, delta_e, fsq_conv, e_conv, verbose=False):
     """
     if verbose:
         if fsq_conv < float("inf"):
-            print(f"FSQ    : {fsq:.3E} < {fsq_conv:.3E} ? {fsq < fsq_conv}")
+            logger.debug(f"FSQ    : {fsq:.3E} < {fsq_conv:.3E} ? {fsq < fsq_conv}")
         if e_conv < float("inf"):
-            print(f"Delta E: {delta_e:.3E} < {e_conv:.3E} ? {delta_e < e_conv}")
+            logger.debug(f"Delta E: {delta_e:.3E} < {e_conv:.3E} ? {delta_e < e_conv}")
     return fsq < fsq_conv and delta_e < e_conv
+
+
+def stop_requested():
+    """
+    Check the abort files ("stopruns" as in the original runs, and "stop").
+    A stop file requests an abort if it is empty or holds a positive integer.
+    """
+    for stop_file in STOP_FILES:
+        if not os.path.exists(stop_file):
+            continue
+        with open(stop_file, "rt") as f:
+            content = f.read().split()
+        try:
+            if not content or int(content[0]) > 0:
+                return stop_file
+        except ValueError:
+            return stop_file
+    return None
 
 
 def solver_converged(verbose: bool):
@@ -165,7 +201,7 @@ def solver_converged(verbose: bool):
 
             if "Stop before density." in line:
                 if verbose:
-                    print(
+                    logger.debug(
                         f"    Sigdiff Matsubara: {sigdiff_mats:6.4f} {mats_conv}, Realaxis: {sigdiff_real:6.4f} {real_conv}"
                     )
                 return False
@@ -177,7 +213,7 @@ def save_solver(solver_it):
     Save data produced by the DMFT solver.
     """
     solver_dir = f"solver-it-{solver_it}"
-    os.makedirs(solver_dir)
+    os.makedirs(solver_dir, exist_ok=True)
     shutil.copy("out", f"{solver_dir}/")
     for outfile in glob.glob("*.out"):
         if "slurm" in outfile:
@@ -205,26 +241,42 @@ def save_it(savedir, it):
     shutil.copy("eparm", savedir_it)
     if os.path.exists("sig"):
         shutil.copy("sig", savedir_it)
-    if len(glob.glob("*band*.data")) > 0:
-        os.makedirs(f"{savedir_it}/band")
-        for bandfile in glob.glob("*band*.{data,gpi}"):
+    band_files = glob.glob("*band*.data") + glob.glob("*band*.gpi")
+    if band_files:
+        os.makedirs(f"{savedir_it}/band", exist_ok=True)
+        for bandfile in band_files:
             shutil.move(bandfile, f"{savedir_it}/band")
     if len(glob.glob("*dos*.dat")) > 0:
-        os.makedirs(f"{savedir_it}/dos")
+        os.makedirs(f"{savedir_it}/dos", exist_ok=True)
         for dosfile in glob.glob("*dos*.dat"):
             shutil.move(dosfile, f"{savedir_it}/dos")
     if (len(glob.glob("real-*.dat")) + len(glob.glob("imag-*.dat"))) > 0:
-        os.makedirs(f"{savedir_it}/dat")
-        for datfile in glob.glob("real-*.dat"):
+        os.makedirs(f"{savedir_it}/dat", exist_ok=True)
+        for datfile in glob.glob("real-*.dat") + glob.glob("imag-*.dat"):
             shutil.move(datfile, f"{savedir_it}/dat")
-        for datfile in glob.glob("imag-*.dat"):
-            shutil.move(datfile, f"{savedir_it}/dat")
-    if len(glob.glob("*.h5")) > 0:
-        for hdffile in glob.glob("*.h5"):
-            shutil.move(hdffile, f"{savedir_it}")
-    if len(glob.glob("solver-it*")) > 0:
-        for solverdir in glob.glob("solver-it*"):
-            shutil.move(solverdir, f"{savedir_it}")
+    for hdffile in glob.glob("*.h5"):
+        shutil.move(hdffile, savedir_it)
+    for solverdir in glob.glob("solver-it*"):
+        shutil.move(solverdir, savedir_it)
+
+
+def backup_state_files():
+    """
+    Copy the current state files to their *_last backups.
+    """
+    shutil.copy("out", "out_last")
+    shutil.copy("pot", "pot_last")
+    shutil.copy("eparm", "eparm_last")
+    if os.path.exists("sig"):
+        shutil.copy("sig", "sig_last")
+
+
+def log_convergence_step(fsq, etot, delta_e):
+    """
+    Append one iteration to runsConvgeLog (same role as in the original runs).
+    """
+    with open("runsConvgeLog", "a") as f:
+        f.write(f" {fsq:15.8e} {etot:.10f} {delta_e:15.8e}\n")
 
 
 def runs(
@@ -243,111 +295,108 @@ def runs(
     Run RSPt iterations until convergence is achieved.
     Parameters:
     ===========
-    rspt_binary: str - Name of the RSPt executable to run (usually "rspt")
+    rspt_binary: list[str] - The RSPt executable to run (usually ["rspt"])
+    run_prefix: list[str]  - Launcher command (ex. ["mpirun", "-n", "64"])
     fsq_conv: float  - convergence criteria for FSQ
     e_conv: float    - convergence criteria for total energy
     max_iter: int    - Maximum number of SCF DFT iterations to run
-    max_solver_it : int - Max number of attempts to converge the DMFT self energy (usually 1, but for real axis solvers this should be set higher)
-    run_prefix: str - Commands used to launch the RSPt binary (ex. "mpirun -n 64" or "srun -n 128 -c 2")
+    max_solver_it: int - Max number of attempts to converge the DMFT self energy (usually 1, but for real axis solvers this should be set higher)
     save: bool      - Save data at each SCF iteration
     save_solver_it  - Save data at each solver iteration
     **kwargs        - Arguments passed on to run_rspt
 
     Returns:
     ========
-    True  - if the SCF cycle did converge
-    False - otherwise
+    dict with keys:
+      converged: bool  - whether the SCF cycle converged
+      diverged: bool   - whether fsq exceeded the divergence guard
+      fsq: float       - final fsq
+      delta_e: float   - final change in total energy
+      etot: float      - final total energy
+      it: int          - number of the last completed iteration
     """
+    setup_logging(verbose)
     save = save or save_solver_it
     savedir = None
     if save:
         savedir = setup_savedir()
-    fsq, last_e, it = init_runs()
-    if it == 0:
-        print(f"Starting new SCF run: {datetime.datetime.now()}")
-        if verbose:
-            print(f"run command: {' '.join(run_prefix + rspt_binary)}")
-            print(
-                f"Other settings: {' '.join([f'{key} = {value}' for key, value in kwargs.items()])}"
-            )
-            print()
-        with open("runs.info", "w") as f:
-            f.write(f"Starting new SCF run at {datetime.datetime.now()}\n")
-            f.write(f"run command: {' '.join(run_prefix + rspt_binary)}\n")
-            f.write(
-                f"Other settings: {' '.join([f'{key} = {value}' for key, value in kwargs.items()])}\n"
-            )
+    state = init_runs()
+    run_command = " ".join(run_prefix + rspt_binary)
+    settings = " ".join(f"{key} = {value}" for key, value in kwargs.items())
+    if state.it == 0:
+        logger.info(f"Starting new SCF run: {datetime.datetime.now()}")
     else:
-        print(f"Continuing SCF run from iteration {it}: {datetime.datetime.now()}")
-        if verbose:
-            print(f"run command: {' '.join(run_prefix + rspt_binary)}")
-            print(
-                f"Other settings: {' '.join([f'{key} = {value}' for key, value in kwargs.items()])}"
-            )
-            print(f"fsq read = {fsq}")
-            print(f"last total energy read = {last_e}")
-            print()
-
-        with open("runs.info", "a") as f:
-            f.write(
-                f"Continuing SCF run from iteration {it}: {datetime.datetime.now()}\n"
-            )
-            f.write(f"run command: {' '.join(run_prefix + rspt_binary)}\n")
-            f.write(
-                f"Other settings: {' '.join([f'{key} = {value}' for key, value in kwargs.items()])}\n"
-            )
-            f.write(f"fsq read = {fsq}\n")
-            f.write(f"last total energy read = {last_e}\n")
-            it = 0
+        logger.info(
+            f"Continuing SCF run from iteration {state.it}: {datetime.datetime.now()}"
+        )
+        logger.debug(f"fsq read = {state.fsq}")
+        logger.debug(f"last total energy read = {state.etot}")
+    logger.debug(f"run command: {run_command}")
+    logger.debug(f"Other settings: {settings}")
     with open("hist", "a") as f:
-        f.write(f"run command: {' '.join(run_prefix + rspt_binary)}\n")
-    it += 1
-    # We don't store the difference in total energy, so use the last e_tot calculated.
-    # This is just to have an initial values for delta_e, it will mean that we will run at least one
-    # iteration before we think we are converged, regardless of fsq.
-    delta_e = abs(last_e)
-    etot = last_e
-    while not converged(fsq, delta_e, fsq_conv, e_conv, verbose) and it < max_iter + 1:
+        f.write(f"run command: {run_command}\n")
+
+    fsq = state.fsq
+    last_e = state.etot
+    etot = state.etot
+    # Always run at least one new iteration before declaring convergence;
+    # the energy difference is unknown until we have a new total energy.
+    delta_e = float("inf")
+    diverged = False
+    it = state.it
+    performed = 0
+    while not converged(fsq, delta_e, fsq_conv, e_conv, verbose) and performed < max_iter:
+        it += 1
+        performed += 1
         if os.path.exists(f"green.inp-{it}"):
             shutil.copy(f"green.inp-{it}", "green.inp")
 
         for i in range(1, max_solver_it + 1):
-            if os.path.exists("stop"):
-                sys.exit("Found a stop file. Therefore stopping.")
+            stop_file = stop_requested()
+            if stop_file is not None:
+                logger.info(f"Found a {stop_file} file. Therefore stopping.")
+                raise SystemExit(f"Found a {stop_file} file. Therefore stopping.")
             if os.path.exists(f"green.inp-{it}-{i}"):
                 shutil.copy(f"green.inp-{it}-{i}", "green.inp")
             t_rspt = time.perf_counter()
             run_rspt(rspt_binary, run_prefix, **kwargs)
             t_rspt = time.perf_counter() - t_rspt
-            if verbose:
-                print(f"    RSPt took {t_rspt:5.3f} seconds")
+            logger.debug(f"    RSPt took {t_rspt:5.3f} seconds")
 
             if solver_converged(verbose):
                 break
             if save_solver_it:
                 save_solver(i)
-        shutil.copy("out", "out_last")
-        shutil.copy("pot", "pot_last")
-        shutil.copy("eparm", "eparm_last")
-        if os.path.exists("sig"):
-            shutil.copy("sig", "sig_last")
+        backup_state_files()
         if save:
             save_it(savedir, it)
         if os.path.exists("convergence"):
-            fsq, etot, _, _, _ = read_convergence()
+            new_state = read_convergence()
+            fsq = new_state.fsq
+            etot = new_state.etot
             delta_e = abs(last_e - etot)
             last_e = etot
-        it += 1
-    print(f"Ending SCF run after {it-1} iterations: {datetime.datetime.now()}\n")
-    with open("runs.info", "a") as f:
-        f.write(f"Ending SCF run after {it} iterations\n")
-        f.write(f"fsq = {fsq}\n")
-        f.write(f"last total energy = {last_e}\n")
+            log_convergence_step(fsq, etot, delta_e)
+        else:
+            logger.warning(
+                "RSPt did not write a convergence file; cannot check convergence."
+            )
+        if fsq > FSQ_MAX:
+            diverged = True
+            logger.error(
+                f"SCF cycle diverged: fsq = {fsq:.3e} > {FSQ_MAX:.1e}. Stopping."
+            )
+            break
+
+    logger.info(f"Ending SCF run after {it} iterations: {datetime.datetime.now()}")
+    logger.info(f"fsq = {fsq}")
+    logger.info(f"last total energy = {last_e}")
 
     return dict(
         converged=converged(fsq, delta_e, fsq_conv, e_conv),
+        diverged=diverged,
         fsq=fsq,
         delta_e=delta_e,
         etot=etot,
-        it=it - 1,
+        it=it,
     )

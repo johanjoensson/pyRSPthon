@@ -1,8 +1,7 @@
 from pyRSPthon.read import read, green
-import numpy as np
+from pyRSPthon.cli._common import add_plot_arguments, apply_plot_style, finish_plots
 import matplotlib.pyplot as plt
 from argparse import ArgumentParser
-from os import getcwd
 from itertools import cycle, product
 
 linestyles = ["-", "--", ":", "-.", (0, (1, 10)), (0, (5, 10)), (0, (3, 10, 1, 10))]
@@ -14,7 +13,7 @@ def plot_dos(dos, e_unit):
     if dos.up is not None:
         plt.plot(dos.w, dos.up, label=r"$\uparrow$")
         plt.plot(dos.w, dos.down, "--", label=r"$\downarrow$")
-    plt.title("Density of state")
+    plt.title("Density of states")
     plt.xlabel(rf"E - E$_F$ ({e_unit})")
     plt.ylabel(rf"DOS ($({e_unit}^{{-1}})$)")
     plt.legend()
@@ -24,7 +23,7 @@ def plot_dos(dos, e_unit):
         plt.plot(dos.w, dos.s[:, 0], linestyle=linestyles[0], label=r"S$_x$")
         plt.plot(dos.w, dos.s[:, 1], linestyle=linestyles[1], label=r"S$_y$")
         plt.plot(dos.w, dos.s[:, 2], linestyle=linestyles[2], label=r"S$_z$")
-        plt.title("Density of state")
+        plt.title("Density of states")
         plt.xlabel(rf"E - E$_F$ ({e_unit})")
         plt.ylabel(rf"DOS ($({e_unit}^{{-1}})$)")
         plt.legend()
@@ -34,7 +33,7 @@ def plot_dos(dos, e_unit):
         plt.plot(dos.w, dos.l[:, 0], linestyle=linestyles[0], label=r"L$_x$")
         plt.plot(dos.w, dos.l[:, 1], linestyle=linestyles[1], label=r"L$_y$")
         plt.plot(dos.w, dos.l[:, 2], linestyle=linestyles[2], label=r"L$_z$")
-        plt.title("Density of state")
+        plt.title("Density of states")
         plt.xlabel(rf"E - E$_F$ ({e_unit})")
         plt.ylabel(rf"DOS ($({e_unit}^{{-1}})$)")
         plt.legend()
@@ -44,11 +43,11 @@ def plot_dos(dos, e_unit):
         plt.plot(dos.w, dos.j[:, 0], linestyle=linestyles[0], label=r"J$_x$")
         plt.plot(dos.w, dos.j[:, 1], linestyle=linestyles[1], label=r"J$_y$")
         plt.plot(dos.w, dos.j[:, 2], linestyle=linestyles[2], label=r"J$_z$")
-        plt.title("Density of state")
+        plt.title("Density of states")
         plt.xlabel(rf"E - E$_F$ ({e_unit})")
         plt.ylabel(rf"DOS ($({e_unit}^{{-1}})$)")
         plt.legend()
-    plt.show()
+
 
 
 def plot_pdos(pdos, e_unit):
@@ -57,7 +56,7 @@ def plot_pdos(pdos, e_unit):
     if pdos.up is not None:
         plt.plot(pdos.w, pdos.up, label=r"$\uparrow$")
         plt.plot(pdos.w, pdos.down, "--", label=r"$\downarrow$")
-    plt.title("Projected density of state")
+    plt.title("Projected density of states")
     plt.xlabel(rf"E - E$_F$ ({e_unit})")
     plt.ylabel(rf"pDOS ({e_unit}$^{{-1}}$)")
     plt.legend()
@@ -67,7 +66,7 @@ def plot_pdos(pdos, e_unit):
         plt.plot(pdos.w, pdos.s[:, 0], linestyle=linestyles[0], label=r"S$_x$")
         plt.plot(pdos.w, pdos.s[:, 1], linestyle=linestyles[1], label=r"S$_y$")
         plt.plot(pdos.w, pdos.s[:, 2], linestyle=linestyles[2], label=r"S$_z$")
-        plt.title("Projected density of state")
+        plt.title("Projected density of states")
         plt.xlabel(rf"E - E$_F$ ({e_unit})")
         plt.ylabel(rf"pDOS ({e_unit}$^{{-1}}$)")
         plt.legend()
@@ -77,7 +76,7 @@ def plot_pdos(pdos, e_unit):
         plt.plot(pdos.w, pdos.l[:, 0], linestyle=linestyles[0], label=r"L$_x$")
         plt.plot(pdos.w, pdos.l[:, 1], linestyle=linestyles[1], label=r"L$_y$")
         plt.plot(pdos.w, pdos.l[:, 2], linestyle=linestyles[2], label=r"L$_z$")
-        plt.title("Projected density of state")
+        plt.title("Projected density of states")
         plt.xlabel(rf"E - E$_F$ ({e_unit})")
         plt.ylabel(rf"pDOS ({e_unit}$^{{-1}}$)")
         plt.legend()
@@ -87,7 +86,7 @@ def plot_pdos(pdos, e_unit):
         plt.plot(pdos.w, pdos.j[:, 0], linestyle=linestyles[0], label=r"J$_x$")
         plt.plot(pdos.w, pdos.j[:, 1], linestyle=linestyles[1], label=r"J$_y$")
         plt.plot(pdos.w, pdos.j[:, 2], linestyle=linestyles[2], label=r"J$_z$")
-        plt.title("Projected density of state")
+        plt.title("Projected density of states")
         plt.xlabel(rf"E - E$_F$ ({e_unit})")
         plt.ylabel(rf"pDOS ({e_unit}$^{{-1}}$)")
         plt.legend()
@@ -102,11 +101,11 @@ def plot_pdos(pdos, e_unit):
                 linestyle=next(linecycler),
                 label=f"Orbital {orb}",
             )
-        plt.title("Orbital projected density of state")
+        plt.title("Orbital projected density of states")
         plt.xlabel(rf"E - E$_F$ ({e_unit})")
         plt.ylabel(rf"pDOS ({e_unit}$^{{-1}}$)")
         plt.legend()
-    plt.show()
+
 
 
 def plot_dat(cluster, dataset, dat, e_unit):
@@ -167,16 +166,20 @@ def plot_dat(cluster, dataset, dat, e_unit):
             fig.suptitle(f"Orbital projected {dataset}")
             fig.supxlabel(rf"E - E$_F$ ({e_unit})")
             fig.supylabel(rf"Im{{{dataset}}}")
-    plt.show()
 
 
-def run(cluster, data, directory, eV):
+
+def run(args):
+    cluster, data, directory, eV = args.cluster, args.data, args.directory, args.eV
     if not eV:
         try:
             green_dat = green.get_green(prefix=directory)
             eV = "eV" in green_dat.spectrum
-        except FileNotFoundError, TypeError:
-            pass
+        except (FileNotFoundError, TypeError):
+            print(
+                "No green.inp found, energies assumed to be in Ry "
+                "(use --eV to override)."
+            )
     e_unit = "eV" if eV else "Ry"
 
     if data.lower() == "dos":
@@ -188,22 +191,19 @@ def run(cluster, data, directory, eV):
     else:
         dat = read(f"{directory}/{data}-{cluster}.dat")
         plot_dat(cluster, data, dat, e_unit)
+    finish_plots(args)
 
 
 def main():
-    parser = ArgumentParser(description="Plot dos.dat file")
-    parser.add_argument("cluster", type=str, help="Cluster to plot.")
-    parser.add_argument("data", type=str, help="datafile to plot.")
-    parser.add_argument("--eV", action="store_true", help="Unit of energy is eV.")
-    parser.add_argument(
-        "-d",
-        "--directory",
-        default=f"{getcwd()}",
-        type=str,
-        help="Look for files in directory.",
+    parser = ArgumentParser(
+        description="Plot RSPt data files (dos, pdos, real-/imag-<dataset>)."
     )
+    add_plot_arguments(parser, cluster=True)
+    parser.add_argument("data", type=str, help="Dataset to plot (dos, pdos, hyb, ...)")
+    parser.add_argument("--eV", action="store_true", help="Unit of energy is eV.")
     args = parser.parse_args()
-    run(**vars(args))
+    apply_plot_style(args)
+    run(args)
 
 
 if __name__ == "__main__":

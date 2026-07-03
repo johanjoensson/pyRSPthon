@@ -99,21 +99,22 @@ def get_green(prefix="."):
         prefix = prefix + "/"
     clusters = []
     spectrum = None
-    emesh = (1001, -1, 1, 0.01)
+    emesh = None
     matsubara = None
     kpath = None
     with open(f"{prefix}green.inp", "r") as f:
         try:
             line = next(f)
             while line:
-                line = remove_comments(line)
-                if "cluster" in line:
+                fields = remove_comments(line).split()
+                keyword = fields[0].lower() if fields else ""
+                if keyword == "cluster":
                     clusters.append(extract_cluster(f))
-                elif "spectrum" in line:
+                elif keyword == "spectrum":
                     spectrum, kpath = extract_spectrum(f)
-                elif "energymesh" in line:
+                elif keyword == "energymesh":
                     emesh = extract_emesh(f)
-                elif "matsubara" in line:
+                elif keyword == "matsubara":
                     matsubara = extract_matsubara(f)
                 line = next(f)
         except StopIteration:

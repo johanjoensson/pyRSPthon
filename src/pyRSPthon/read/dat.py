@@ -14,108 +14,125 @@ RSPtDAT = namedtuple(
     "RSPtDAT", ["w", "sum", "up", "down", "orbitals", "blocks"], defaults=None
 )
 
+# Column-label patterns, tried in order. More specific patterns (tot+, spin up)
+# must come before the generic ones (total, up).
+_COLUMN_PATTERNS = (
+    ("energy", ("energy", "frequency")),
+    ("up", ("tot+", "spin up")),
+    ("down", ("tot-", "spin dn", "spin down")),
+    ("total", ("total", "sum", "tot")),
+    ("sx", ("sx",)),
+    ("sy", ("sy",)),
+    ("sz", ("sz",)),
+    ("lx", ("lx",)),
+    ("ly", ("ly",)),
+    ("lz", ("lz",)),
+    ("jx", ("jx",)),
+    ("jy", ("jy",)),
+    ("jz", ("jz",)),
+    ("orbitals", ("orbitals",)),
+    ("up", ("up",)),
+    ("down", ("down", "dn")),
+)
+
+
+def split_header_columns(header):
+    """
+    Split a '#'-prefixed RSPt column header line into column labels.
+    """
+    header = header.strip().strip("#")
+    header = header.replace(",", "  ")
+    return re.split("  +", header.strip())
+
+
+def match_columns(columns):
+    """
+    Map RSPt header column labels to column indices.
+
+    Parameters:
+    ===========
+    columns: list[str] - column labels from the header line
+
+    Returns:
+    ========
+    dict[str, int] - keys among: energy, total, up, down, sx..sz, lx..lz,
+                     jx..jz, orbitals (index of the first orbital column).
+                     Only matched labels are present.
+    """
+    matched = {}
+    for i, label in enumerate(columns):
+        label_l = label.lower()
+        if not label_l:
+            continue
+        for name, needles in _COLUMN_PATTERNS:
+            if any(needle in label_l for needle in needles):
+                # First match wins; both for the pattern and for the column.
+                matched.setdefault(name, i)
+                break
+        else:
+            print(f"Unknown column label {label!r}")
+    return matched
+
+
+def _read_header_line(dataname):
+    with open(dataname, "r") as f:
+        header = next(f)
+    return header
+
+
+def _vector_columns(data, cols, names):
+    """
+    Collect columns named in names (e.g. ("sx","sy","sz")) into an (N, 3)
+    array, or None if none of them are present.
+    """
+    if not any(name in cols for name in names):
+        return None
+    out = np.zeros((data.shape[0], len(names)))
+    for k, name in enumerate(names):
+        if name in cols:
+            out[:, k] = data[:, cols[name]]
+    return out
+
+
+def _extract_dos_columns(dataname):
+    """
+    Shared implementation for dos.dat and pdos-*.dat: parse the header,
+    load the data and pull out the standard columns.
+    """
+    header = _read_header_line(dataname)
+    cols = match_columns(split_header_columns(header))
+
+    if "energy" not in cols:
+        raise RuntimeError(
+            f"{dataname} does not contain an energy mesh! "
+            "(no 'Energy' or 'Frequency' column in the header)"
+        )
+    if "total" not in cols:
+        raise RuntimeError(
+            f"{dataname} does not contain a total DOS column! "
+            "(no 'Total' column in the header)"
+        )
+
+    dos = np.loadtxt(dataname)
+    return dos, cols
+
 
 def extract_pdos(cluster, prefix="."):
     if prefix != "" and prefix[-1] != "/":
         prefix = prefix + "/"
     dataname = f"{prefix}pdos-{cluster}.dat"
-    with open(dataname, "r") as f:
-        header = next(f)
-    assert "orbitals" in header.lower()
-    header = header.strip()
-    header = header.strip("#")
-    columns = re.split("  +", header)
+    dos, cols = _extract_dos_columns(dataname)
 
-    e_col = -1
-    tot_col = -1
-    up_col = -1
-    dn_col = -1
-    sx_col = -1
-    sy_col = -1
-    sz_col = -1
-    lx_col = -1
-    ly_col = -1
-    lz_col = -1
-    jx_col = -1
-    jy_col = -1
-    jz_col = -1
-    orb_start = -1
-    for i, label in reversed(list(enumerate(columns))):
-        if "energy" in label.lower() or "frequency" in label.lower():
-            e_col = i
-        elif "total" in label.lower():
-            tot_col = i
-        elif "spin up" in label.lower():
-            up_col = i
-        elif "spin dn" in label.lower():
-            dn_col = i
-        elif "sx" in label.lower():
-            sx_col = i
-        elif "sy" in label.lower():
-            sy_col = i
-        elif "sz" in label.lower():
-            sz_col = i
-        elif "lx" in label.lower():
-            lx_col = i
-        elif "ly" in label.lower():
-            ly_col = i
-        elif "lz" in label.lower():
-            lz_col = i
-        elif "jx" in label.lower():
-            jx_col = i
-        elif "jy" in label.lower():
-            jy_col = i
-        elif "jz" in label.lower():
-            jz_col = i
-        elif "orbitals" in label.lower():
-            orb_start = i
-        else:
-            print(f"Unknown label {label}")
-
-    pdos = np.loadtxt(dataname)
-    if sx_col != -1 or sy_col != -1 or sz_col != -1:
-        s = np.zeros((pdos.shape[0], 3))
-        if sx_col != -1:
-            s[:, 0] = pdos[:, sx_col]
-        if sy_col != -1:
-            s[:, 1] = pdos[:, sy_col]
-        if sz_col != -1:
-            s[:, 2] = pdos[:, sz_col]
-    else:
-        s = None
-    if lx_col != -1 or ly_col != -1 or lz_col != -1:
-        l = np.zeros((pdos.shape[0], 3))
-        if lx_col != -1:
-            l[:, 0] = pdos[:, lx_col]
-        if ly_col != -1:
-            l[:, 1] = pdos[:, ly_col]
-        if lz_col != -1:
-            l[:, 2] = pdos[:, lz_col]
-    else:
-        l = None
-    if jx_col != -1 or jy_col != -1 or jz_col != -1:
-        j = np.zeros((pdos.shape[0], 3))
-        if jx_col != -1:
-            j[:, 0] = pdos[:, jx_col]
-        if jy_col != -1:
-            j[:, 1] = pdos[:, jy_col]
-        if jz_col != -1:
-            j[:, 2] = pdos[:, jz_col]
-    else:
-        j = None
-    if orb_start != -1:
-        orb_dos = pdos[:, orb_start:]
-    else:
-        orb_dos = None
+    orbitals = dos[:, cols["orbitals"]:] if "orbitals" in cols else None
     return RSPtpDOS(
-        w=pdos[:, e_col],
-        sum=pdos[:, tot_col],
-        up=pdos[:, up_col] if up_col != -1 else None,
-        down=pdos[:, dn_col] if dn_col != -1 else None,
-        s=s,
-        l=l,
-        j=j,
-        orbitals=orb_dos if orb_start != -1 else None,
+        w=dos[:, cols["energy"]],
+        sum=dos[:, cols["total"]],
+        up=dos[:, cols["up"]] if "up" in cols else None,
+        down=dos[:, cols["down"]] if "down" in cols else None,
+        s=_vector_columns(dos, cols, ("sx", "sy", "sz")),
+        l=_vector_columns(dos, cols, ("lx", "ly", "lz")),
+        j=_vector_columns(dos, cols, ("jx", "jy", "jz")),
+        orbitals=orbitals,
     )
 
 
@@ -123,96 +140,35 @@ def extract_dos(prefix="."):
     if prefix != "" and prefix[-1] != "/":
         prefix = prefix + "/"
     dataname = f"{prefix}dos.dat"
-    with open(dataname, "r") as f:
-        header = next(f)
-    header = header.strip()
-    header = header.strip("#")
-    columns = re.split("  +", header)
+    dos, cols = _extract_dos_columns(dataname)
 
-    e_col = -1
-    tot_col = -1
-    up_col = -1
-    dn_col = -1
-    sx_col = -1
-    sy_col = -1
-    sz_col = -1
-    lx_col = -1
-    ly_col = -1
-    lz_col = -1
-    jx_col = -1
-    jy_col = -1
-    jz_col = -1
-    for i, label in reversed(list(enumerate(columns))):
-        if "energy" in label.lower() or "frequency" in label.lower():
-            e_col = i
-        elif "total" in label.lower():
-            tot_col = i
-        elif "spin up" in label.lower():
-            up_col = i
-        elif "spin dn" in label.lower():
-            dn_col = i
-        elif "sx" in label.lower():
-            sx_col = i
-        elif "sy" in label.lower():
-            sy_col = i
-        elif "sz" in label.lower():
-            sz_col = i
-        elif "lx" in label.lower():
-            lx_col = i
-        elif "ly" in label.lower():
-            ly_col = i
-        elif "lz" in label.lower():
-            lz_col = i
-        elif "jx" in label.lower():
-            jx_col = i
-        elif "jy" in label.lower():
-            jy_col = i
-        elif "jz" in label.lower():
-            jz_col = i
-        else:
-            print(f"Unknown label {label}")
-
-    print(f"{sz_col=}")
-    pdos = np.loadtxt(dataname)
-    if sx_col != -1 or sy_col != -1 or sz_col != -1:
-        s = np.zeros((pdos.shape[0], 3))
-        if sx_col != -1:
-            s[:, 0] = pdos[:, sx_col]
-        if sy_col != -1:
-            s[:, 1] = pdos[:, sy_col]
-        if sz_col != -1:
-            s[:, 2] = pdos[:, sz_col]
-    else:
-        s = None
-    if lx_col != -1 or ly_col != -1 or lz_col != -1:
-        l = np.zeros((pdos.shape[0], 3))
-        if lx_col != -1:
-            l[:, 0] = pdos[:, lx_col]
-        if ly_col != -1:
-            l[:, 1] = pdos[:, ly_col]
-        if lz_col != -1:
-            l[:, 2] = pdos[:, lz_col]
-    else:
-        l = None
-    if jx_col != -1 or jy_col != -1 or jz_col != -1:
-        j = np.zeros((pdos.shape[0], 3))
-        if jx_col != -1:
-            j[:, 0] = pdos[:, jx_col]
-        if jy_col != -1:
-            j[:, 1] = pdos[:, jy_col]
-        if jz_col != -1:
-            j[:, 2] = pdos[:, jz_col]
-    else:
-        j = None
     return RSPtDOS(
-        w=pdos[:, e_col],
-        sum=pdos[:, tot_col],
-        up=pdos[:, up_col] if up_col != -1 else None,
-        down=pdos[:, dn_col] if dn_col != -1 else None,
-        s=s,
-        l=l,
-        j=j,
+        w=dos[:, cols["energy"]],
+        sum=dos[:, cols["total"]],
+        up=dos[:, cols["up"]] if "up" in cols else None,
+        down=dos[:, cols["down"]] if "down" in cols else None,
+        s=_vector_columns(dos, cols, ("sx", "sy", "sz")),
+        l=_vector_columns(dos, cols, ("lx", "ly", "lz")),
+        j=_vector_columns(dos, cols, ("jx", "jy", "jz")),
     )
+
+
+def _read_dat_header(fname):
+    """
+    Read the header line and the optional indexmap comment block of a
+    real-*/imag-* dat file.
+    """
+    indexmap = None
+    with open(fname, "r") as f:
+        header = next(f)
+        if "indexmap" in next(f, ""):
+            indexmap = []
+            for line in f:
+                if line[0] != "#":
+                    break
+                row = [int(i) for i in line.strip("#").split()]
+                indexmap.append(row)
+    return header, indexmap
 
 
 def extract_dat(dataname, cluster, prefix="."):
@@ -220,98 +176,50 @@ def extract_dat(dataname, cluster, prefix="."):
         prefix = prefix + "/"
     realname = f"{prefix}real-{dataname}-{cluster}.dat"
     imagname = f"{prefix}imag-{dataname}-{cluster}.dat"
-    indexmap = None
     try:
-        with open(realname, "r") as f:
-            header = next(f)
-            if "indexmap" in next(f):
-                indexmap = []
-                for line in f:
-                    if line[0] != "#":
-                        break
-                    line = line.strip("#")
-                    row = [int(i) for i in line.split()]
-                    indexmap.append(row)
+        header, indexmap = _read_dat_header(realname)
     except FileNotFoundError:
         try:
-            with open(imagname, "r") as f:
-                header = next(f)
-                if "indexmap" in next(f):
-                    indexmap = []
-                    for line in f:
-                        if line[0] != "#":
-                            break
-                        line = line.strip("#")
-                        row = [int(i) for i in line.split()]
-                        indexmap.append(row)
+            header, indexmap = _read_dat_header(imagname)
         except FileNotFoundError:
             raise FileNotFoundError(f"Could not find either {realname} or {imagname}.")
     if indexmap is not None:
         indexmap = np.array(indexmap, dtype=int)
 
-    header = header.strip()
-    header = header.strip("#")
-    header = header.replace(",", "  ")
-    columns = re.split("  +", header)
-
-    e_col = -1
-    tot_col = -1
-    up_col = -1
-    dn_col = -1
-    orb_start = len(columns)
-    for i, label in reversed(list(enumerate(columns))):
-        if "energy" in label.lower() or "frequency" in label.lower():
-            e_col = i
-        elif (
-            "total" in label.lower() or "sum" in label.lower() or "tot" in label.lower()
-        ):
-            tot_col = i
-        elif (
-            "tot+" in label.lower()
-            or "spin up" in label.lower()
-            or "up" in label.lower()
-        ):
-            up_col = i
-        elif (
-            "tot-" in label.lower()
-            or "spin down" in label.lower()
-            or "down" in label.lower()
-            or "dn" in label.lower()
-        ):
-            dn_col = i
-        elif "orbitals" in label.lower():
-            orb_start = i
-        else:
-            print(f"Unknown label {label}")
-    if e_col == -1:
+    columns = split_header_columns(header)
+    cols = match_columns(columns)
+    if "energy" not in cols:
         raise RuntimeError(
-            f"{realname}, {imagname} do not contain an energy mesh! (The header does not include 'Energy' or 'Frequency')"
+            f"{realname}, {imagname} do not contain an energy mesh! "
+            "(The header does not include 'Energy' or 'Frequency')"
         )
+    e_col = cols["energy"]
+
     try:
-        re_dat = np.loadtxt(realname, dtype=complex)
+        re_dat = np.loadtxt(realname)
     except FileNotFoundError:
         print(f"Could not find file {realname}. Setting real part to 0.")
         re_dat = None
     try:
-        im_dat = np.loadtxt(imagname, dtype=complex)
+        im_dat = np.loadtxt(imagname)
     except FileNotFoundError:
         print(f"Could not find file {imagname}. Setting imaginary part to 0.")
         im_dat = None
-    # dat = re_dat + 1j * im_dat
     if re_dat is None:
         dat = 1j * im_dat
-        dat[:, 0] = dat[:, 0].imag
+        # The energy mesh is real, even when read from the imaginary-part file
+        dat[:, e_col] = dat[:, e_col].imag
     elif im_dat is None:
-        dat = re_dat
+        dat = re_dat.astype(complex)
     else:
         dat = re_dat + 1j * im_dat
-        dat[:, 0] = dat[:, 0].real
-    if orb_start == -1 and len(columns) < dat.shape[1]:
+        dat[:, e_col] = dat[:, e_col].real
+
+    # Columns beyond the labeled ones hold orbital-resolved data
+    orb_start = cols.get("orbitals")
+    if orb_start is None and len(columns) < dat.shape[1]:
         orb_start = len(columns)
 
-    sum_data = None
-    up_data = None
-    dn_data = None
     orb_data = None
     if indexmap is not None:
         orb_data = np.zeros(
@@ -323,36 +231,47 @@ def extract_dat(dataname, cluster, prefix="."):
             if indexmap[i, j] == 0:
                 continue
             orb_data[:, i, j] = dat[:, indexmap[i, j] - 1]
-    elif orb_start != -1:
+    elif orb_start is not None and orb_start < dat.shape[1]:
         orb_data = dat[:, orb_start:]
-    if tot_col != -1:
-        sum_data = dat[:, tot_col]
-    elif tot_col == -1 and orb_data is not None:
+
+    if "total" in cols:
+        sum_data = dat[:, cols["total"]]
+    elif orb_data is not None and orb_data.ndim == 3:
         sum_data = np.sum(np.diagonal(orb_data, axis1=1, axis2=2), axis=1)
-    elif tot_col == -1:
+    elif orb_data is not None:
+        sum_data = np.sum(orb_data, axis=1)
+    else:
         raise RuntimeError(
-            f"{realname}, {imagname} do not contain either summed up data (header fields 'total') or orbital resolved data (indexmap in header)"
+            f"{realname}, {imagname} do not contain either summed up data "
+            "(header field 'total') or orbital resolved data (indexmap in header)"
         )
-    if dn_col != -1:
-        dn_data = dat[:, dn_col]
-    elif dn_col == -1 and orb_data is not None and orb_data.shape[1] % 2 == 0:
+
+    # With spin polarization but no explicit spin columns, the diagonal
+    # orbital entries hold the two spin channels: first half down, second half up.
+    up_data = None
+    dn_data = None
+    if "down" in cols:
+        dn_data = dat[:, cols["down"]]
+    elif orb_data is not None and orb_data.shape[1] % 2 == 0 and orb_data.shape[1] > 0:
         print(
-            f"{realname}, {imagname} do not contain any spin down projected data. Assuming I can sum the first half of the diagonal orbital terms."
+            f"{realname}, {imagname} do not contain any spin down projected data. "
+            "Assuming I can sum the first half of the diagonal orbital terms."
         )
-        if len(orb_data.shape) == 3:
+        if orb_data.ndim == 3:
             dn_data = np.sum(
                 np.diagonal(orb_data, axis1=1, axis2=2)[:, : orb_data.shape[1] // 2],
                 axis=1,
             )
         else:
             dn_data = np.sum(orb_data[:, : orb_data.shape[1] // 2], axis=1)
-    if up_col != -1:
-        up_data = dat[:, up_col]
-    elif up_col == -1 and orb_data is not None and orb_data.shape[1] % 2 == 0:
+    if "up" in cols:
+        up_data = dat[:, cols["up"]]
+    elif orb_data is not None and orb_data.shape[1] % 2 == 0 and orb_data.shape[1] > 0:
         print(
-            f"{realname}, {imagname} do not contain any spin down projected data. Assuming I can sum the first half of the diagonal orbital terms."
+            f"{realname}, {imagname} do not contain any spin up projected data. "
+            "Assuming I can sum the second half of the diagonal orbital terms."
         )
-        if len(orb_data.shape) == 3:
+        if orb_data.ndim == 3:
             up_data = np.sum(
                 np.diagonal(orb_data, axis1=1, axis2=2)[:, orb_data.shape[1] // 2 :],
                 axis=1,

@@ -10,3 +10,4 @@ Ex.
 
 from .dat import RSPtDOS, RSPtpDOS, RSPtDAT, extract_pdos, extract_dos, extract_dat
 from .read import read
+from .symcof import read_symcof

@@ -1,6 +1,10 @@
+__pycache__/
+*.py[cod]
 build/
 dist/
-src/pyRSPthon.egg-info
-*/__pycache__
-.*~
+*.egg-info/
+.venv/
+venv/
+*.un~
+.*.un~
 .*.swp
