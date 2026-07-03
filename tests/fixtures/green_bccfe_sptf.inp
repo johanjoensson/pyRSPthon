@@ -1,0 +1,23 @@
+matsubara
+256 16 40 10
+
+inputoutput
+.false. .true.
+
+convergency
+1d-2 5d-1 3 1
+
+verbose
+Solver Projection Dc
+
+debug
+Renorm_corr Symmsolver 
+
+cluster
+1  eV UJ                      ! ntot [eV] [UJ] [Cf]
+1  2  1  1  0 2.0 0.6         ! ID F0 [F2 [F4 [F6]]] or U [J]
+1 -1  0.6                     ! solver_type DC sigma_mix [tensmom_mag]
+4 100 1e-1 0.8d0              ! [Solver parameters]
+.false.                       ! [DC parameters]
+
+

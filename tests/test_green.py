@@ -5,7 +5,8 @@ from pyRSPthon.read.green import get_green
 
 GREEN_INP = """# a green.inp with a band path
 cluster
- Id: Fe3d
+1 IdFe3d
+1 2 1 1 0
 
 energymesh
  501 -1.0 1.0 0.005
@@ -35,7 +36,7 @@ def test_get_green(tmp_path):
 
 def test_no_energymesh_gives_none(tmp_path):
     # regression: a fabricated default emesh used to be returned silently
-    (tmp_path / "green.inp").write_text("cluster\n Id: X\n")
+    (tmp_path / "green.inp").write_text("cluster\n1 IdX\n1 2 1 1 0\n")
     green = get_green(prefix=str(tmp_path))
     assert green.emesh is None
-    assert len(green.clusters) == 1
+    assert green.clusters == ["X"]

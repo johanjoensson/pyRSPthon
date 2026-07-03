@@ -1,0 +1,19 @@
+# example green.inp file for an LDA+U calculation of AFM NiO with
+# fully localized limit double counting and default set-up
+convergency
+1d-6 1d-4
+
+verbose
+Interface
+
+cluster
+1 Ry                       ! ntot [eV] [UJ] [Cf]
+1 2 1 1 0 0.59 0.60 0.38   ! t l e site basis F0 [F2 [F4 [F6]]] or U [J]
+2 2 1.0                    ! solver DC sigma_mix [tensmom_mag]
+
+cluster
+1 Ry                       ! ntot [eV] [UJ] [Cf]
+2 2 1 1 0 0.59 0.60 0.38   ! t l e site basis F0 [F2 [F4 [F6]]] or U [J]
+2 2 1.0                    ! solver DC sigma_mix [tensmom_mag]
+
+

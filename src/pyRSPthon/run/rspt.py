@@ -2,10 +2,13 @@
 Collection of functions for running single RSPt steps and checking the output.
 """
 
+import logging
 import subprocess
 import os
 import signal
 import time
+
+logger = logging.getLogger("pyRSPthon.runs.rspt")
 
 
 def check_reset_fields(fields: list[str], t: int, e: int, l: int):
@@ -280,8 +283,7 @@ def run_rspt(rspt_binary: list[str], run_prefix: list[str], check_rspt: bool, **
     # as SIGINT so it can shut down gracefully.
     def handler(signum, _):
         signame = signal.Signals(signum).name
-        print(f"Signal {signame} ({signum}) received.")
-        print("Terminating execution.")
+        logger.warning(f"Signal {signame} ({signum}) received; terminating RSPt.")
         if proc is not None:
             proc.send_signal(signal.SIGINT)
 

@@ -1,0 +1,54 @@
+# typical input file for the DMFT code
+# CeFe2 with SPTF
+# please use the RSPt manual for further reference
+
+matsubara
+2048  64 128 8	        	! nmats nmats_head nmats_log nmats_tail
+
+energymesh
+2012 -1.0 1.0 0.01      ! nemesh emin emax eim
+
+inputoutput
+.true. .true.		! readsig csc
+
+convergency
+1d-6 1d-5 988 988		   ! n_conv sig_conv max_iter max_solver_iter
+
+verbose      
+Projection Dc Solver_extra Sigma
+
+! debug                  
+! Projection
+
+mixing                  
+3 0.15 0.2              ! mix_method max_slope sigdiff_factor
+
+projection
+1				            ! basis_type
+
+!Ce 4f
+cluster
+1 2 eV                  ! ntot, udef, udefcalc
+1 3 1 1 0 2.0 1.0       ! id, U,J / F0 F2 F4 (F6)
+1 -1 0.2 	         	   ! solver_type DC sigma_mix
+5 60 7e-3 0.4             ! solver_options (in this case for full G SPTF)
+.false.
+
+!Fe 3d
+cluster
+1 2 eV                  ! ntot, udef, udefcalc
+2 2 1 1 0 2.0 0.85      ! id, U,J / F0 F2 F4 (F6)
+1 -1 0.2                 ! solver_type DC sigma_mix
+5 60 7e-3 0.3             ! solver_options (in this case for full G SPTF) 
+.false.
+
+
+!Fe 3d
+cluster
+1 2 eV                  ! ntot, udef, udefcalc
+3 2 1 1 0 2.0 0.85      ! id, U,J / F0 F2 F4 (F6)
+1 -1 0.2                 ! solver_type DC sigma_mix
+5 60 7e-3 0.3             ! solver_options (in this case for full G SPTF)
+.false.
+
+

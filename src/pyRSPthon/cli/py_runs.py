@@ -1,5 +1,6 @@
 from argparse import ArgumentParser
 from pyRSPthon.run import runs
+from pyRSPthon.run import report
 import shlex
 import shutil
 import sys
@@ -24,7 +25,11 @@ def run(runcommand: list[str], run_prefix: str, **kwargs):
 
 
 def main():
-    parser = ArgumentParser(description="Run SCF calculations with RSPt.")
+    parser = ArgumentParser(
+        description="Run SCF calculations with RSPt.",
+        epilog="exit codes: 0 converged, 1 error, 2 not converged "
+        "(max iterations reached or diverged)",
+    )
     parser.add_argument(
         "runcommand",
         nargs="+",
@@ -66,12 +71,38 @@ def main():
     )
     parser.add_argument("--save", action="store_true")
     parser.add_argument("--save_solver_it", action="store_true")
-    parser.add_argument("--verbose", action="store_true")
+    parser.add_argument(
+        "--no-verify",
+        action="store_false",
+        dest="verify_inputs",
+        help="Skip the green.inp verification before the first iteration",
+    )
+    verbosity = parser.add_mutually_exclusive_group()
+    verbosity.add_argument(
+        "--quiet",
+        "-q",
+        action="store_const",
+        const=-1,
+        dest="verbosity",
+        help="Only print the final summary",
+    )
+    verbosity.add_argument(
+        "--verbose",
+        "-v",
+        action="store_const",
+        const=1,
+        dest="verbosity",
+        help="Also print debug detail (solver status, timings, file operations)",
+    )
+    parser.set_defaults(verbosity=0)
     args = parser.parse_args()
     try:
         result = run(**vars(args))
     except RuntimeError as err:
-        print(err, file=sys.stderr)
+        message = f"Error: {err}"
+        if report.detect_style(sys.stderr):
+            message = report.colorize(message, "red")
+        print(message, file=sys.stderr)
         sys.exit(1)
     sys.exit(0 if result["converged"] else 2)
 

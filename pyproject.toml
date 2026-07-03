@@ -42,6 +42,7 @@ plot_dat = "pyRSPthon.cli.plot_dat:main"
 py_runs = "pyRSPthon.cli.py_runs:main"
 rspt_structure = "pyRSPthon.cli.rspt_structure:main"
 rspt_kpts = "pyRSPthon.cli.rspt_kpts:main"
+rspt_verify = "pyRSPthon.cli.rspt_verify:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

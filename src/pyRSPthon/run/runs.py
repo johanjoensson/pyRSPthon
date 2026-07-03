@@ -3,9 +3,11 @@ import os
 import datetime
 import glob
 import logging
+import sys
 import time
 from dataclasses import dataclass
 
+from . import report
 from . import run_rspt
 
 logger = logging.getLogger("pyRSPthon.runs")
@@ -35,23 +37,39 @@ class RunState:
     efermi: float = float("nan")
 
 
-def setup_logging(verbose: bool = False):
+def setup_logging(verbosity: int = 0):
     """
-    Log to the console and to runs.info. Safe to call more than once.
+    Log to the console (stdout) and to runs.info. Safe to call more than once.
+    verbosity: -1 = summary only, 0 = per-iteration progress, 1 = debug detail.
+    The runs.info file always gets everything.
     """
     logger.setLevel(logging.DEBUG)
+    styled = report.detect_style()
+    report.set_style(styled)
     if not logger.handlers:
-        console = logging.StreamHandler()
-        console.setFormatter(logging.Formatter("%(message)s"))
+        console = logging.StreamHandler(sys.stdout)
         logfile = logging.FileHandler("runs.info")
         logfile.setFormatter(logging.Formatter("%(asctime)s %(message)s"))
         logger.addHandler(console)
         logger.addHandler(logfile)
+    if verbosity < 0:
+        console_level = report.SUMMARY
+    elif verbosity == 0:
+        console_level = logging.INFO
+    else:
+        console_level = logging.DEBUG
     for handler in logger.handlers:
         if isinstance(handler, logging.StreamHandler) and not isinstance(
             handler, logging.FileHandler
         ):
-            handler.setLevel(logging.DEBUG if verbose else logging.INFO)
+            handler.setLevel(console_level)
+            handler.setFormatter(report.ConsoleFormatter(styled))
+
+
+def _emit(lines, level=logging.INFO):
+    """Log a report block of (text, color) pairs."""
+    for text, color in lines:
+        logger.log(level, text, extra={"color": color})
 
 
 def read_convergence():
@@ -138,7 +156,7 @@ def setup_savedir():
     return savedir
 
 
-def converged(fsq, delta_e, fsq_conv, e_conv, verbose=False):
+def converged(fsq, delta_e, fsq_conv, e_conv):
     """
     Check if the DFT calculation is converged.
     Parameters:
@@ -152,11 +170,10 @@ def converged(fsq, delta_e, fsq_conv, e_conv, verbose=False):
     True  - if fsq is below fsq_conv and delta_e is below e_conv
     False - otherwise
     """
-    if verbose:
-        if fsq_conv < float("inf"):
-            logger.debug(f"FSQ    : {fsq:.3E} < {fsq_conv:.3E} ? {fsq < fsq_conv}")
-        if e_conv < float("inf"):
-            logger.debug(f"Delta E: {delta_e:.3E} < {e_conv:.3E} ? {delta_e < e_conv}")
+    if fsq_conv < float("inf"):
+        logger.debug(f"FSQ    : {fsq:.3E} < {fsq_conv:.3E} ? {fsq < fsq_conv}")
+    if e_conv < float("inf"):
+        logger.debug(f"Delta E: {delta_e:.3E} < {e_conv:.3E} ? {delta_e < e_conv}")
     return fsq < fsq_conv and delta_e < e_conv
 
 
@@ -178,7 +195,7 @@ def stop_requested():
     return None
 
 
-def solver_converged(verbose: bool):
+def solver_converged():
     """
     Check if the DMFT solver has converged.
     Returns:
@@ -200,10 +217,9 @@ def solver_converged(verbose: bool):
                 real_conv = tmp[9] == "T"
 
             if "Stop before density." in line:
-                if verbose:
-                    logger.debug(
-                        f"    Sigdiff Matsubara: {sigdiff_mats:6.4f} {mats_conv}, Realaxis: {sigdiff_real:6.4f} {real_conv}"
-                    )
+                logger.debug(
+                    f"    Sigdiff Matsubara: {sigdiff_mats:6.4f} {mats_conv}, Realaxis: {sigdiff_real:6.4f} {real_conv}"
+                )
                 return False
     return True
 
@@ -279,6 +295,40 @@ def log_convergence_step(fsq, etot, delta_e):
         f.write(f" {fsq:15.8e} {etot:.10f} {delta_e:15.8e}\n")
 
 
+def verify_green_inputs():
+    """
+    Verify green.inp (and any green.inp-* iteration variants) before running.
+    Findings are logged; errors raise RuntimeError so the run aborts before
+    the first RSPt call. A failure of the verifier itself never blocks a run.
+    """
+    from ..read.greeninp import ERROR as V_ERROR, WARNING as V_WARNING
+    from ..verify import verify_green
+
+    files = sorted(
+        fname
+        for fname in glob.glob("green.inp*")
+        if fname == "green.inp" or fname.startswith("green.inp-")
+    )
+    n_errors = 0
+    for fname in files:
+        try:
+            findings = verify_green(".", fname)
+        except Exception as exc:
+            logger.warning(f"Could not verify {fname}: {exc}")
+            continue
+        for finding in findings:
+            level = {V_ERROR: logging.ERROR, V_WARNING: logging.WARNING}.get(
+                finding.level, logging.DEBUG
+            )
+            logger.log(level, f"{fname}: {finding}")
+        n_errors += sum(finding.level == V_ERROR for finding in findings)
+    if n_errors:
+        raise RuntimeError(
+            f"green.inp verification found {n_errors} error(s) that would "
+            "stop or corrupt the run; fix them or rerun with --no-verify"
+        )
+
+
 def runs(
     rspt_binary: list[str],
     run_prefix: list[str],
@@ -288,7 +338,9 @@ def runs(
     max_solver_it: int,
     save: bool,
     save_solver_it: bool,
+    verbosity: int = 0,
     verbose: bool = False,
+    verify_inputs: bool = True,
     **kwargs,
 ):
     """
@@ -303,6 +355,9 @@ def runs(
     max_solver_it: int - Max number of attempts to converge the DMFT self energy (usually 1, but for real axis solvers this should be set higher)
     save: bool      - Save data at each SCF iteration
     save_solver_it  - Save data at each solver iteration
+    verbosity: int  - Console detail: -1 summary only, 0 progress, 1 debug
+    verbose: bool   - Deprecated alias for verbosity=1
+    verify_inputs: bool - Verify green.inp before the first iteration
     **kwargs        - Arguments passed on to run_rspt
 
     Returns:
@@ -315,26 +370,42 @@ def runs(
       etot: float      - final total energy
       it: int          - number of the last completed iteration
     """
-    setup_logging(verbose)
+    if verbose and verbosity == 0:
+        verbosity = 1
+    setup_logging(verbosity)
+    t_start = time.perf_counter()
     save = save or save_solver_it
     savedir = None
     if save:
         savedir = setup_savedir()
     state = init_runs()
     run_command = " ".join(run_prefix + rspt_binary)
-    settings = " ".join(f"{key} = {value}" for key, value in kwargs.items())
-    if state.it == 0:
-        logger.info(f"Starting new SCF run: {datetime.datetime.now()}")
-    else:
-        logger.info(
-            f"Continuing SCF run from iteration {state.it}: {datetime.datetime.now()}"
+    mode = (
+        "fresh start"
+        if state.it == 0
+        else f"continuation (from iteration {state.it})"
+    )
+    _emit(
+        report.header_block(
+            mode=mode,
+            command=run_command,
+            fsq_conv=fsq_conv,
+            e_conv=e_conv,
+            max_iter=max_iter,
+            max_solver_it=max_solver_it,
+            saving=savedir if save else "off",
+            started=datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         )
-        logger.debug(f"fsq read = {state.fsq}")
-        logger.debug(f"last total energy read = {state.etot}")
-    logger.debug(f"run command: {run_command}")
+    )
+    if state.it != 0:
+        logger.debug(f"previous fsq = {state.fsq}")
+        logger.debug(f"previous total energy = {state.etot}")
+    settings = " ".join(f"{key} = {value}" for key, value in kwargs.items())
     logger.debug(f"Other settings: {settings}")
     with open("hist", "a") as f:
         f.write(f"run command: {run_command}\n")
+    if verify_inputs:
+        verify_green_inputs()
 
     fsq = state.fsq
     last_e = state.etot
@@ -345,16 +416,18 @@ def runs(
     diverged = False
     it = state.it
     performed = 0
-    while not converged(fsq, delta_e, fsq_conv, e_conv, verbose) and performed < max_iter:
+    table_started = False
+    while not converged(fsq, delta_e, fsq_conv, e_conv) and performed < max_iter:
         it += 1
         performed += 1
+        t_iter = time.perf_counter()
         if os.path.exists(f"green.inp-{it}"):
             shutil.copy(f"green.inp-{it}", "green.inp")
 
         for i in range(1, max_solver_it + 1):
             stop_file = stop_requested()
             if stop_file is not None:
-                logger.info(f"Found a {stop_file} file. Therefore stopping.")
+                _emit([report.stop_line(stop_file)], level=report.SUMMARY)
                 raise SystemExit(f"Found a {stop_file} file. Therefore stopping.")
             if os.path.exists(f"green.inp-{it}-{i}"):
                 shutil.copy(f"green.inp-{it}-{i}", "green.inp")
@@ -363,13 +436,14 @@ def runs(
             t_rspt = time.perf_counter() - t_rspt
             logger.debug(f"    RSPt took {t_rspt:5.3f} seconds")
 
-            if solver_converged(verbose):
+            if solver_converged():
                 break
             if save_solver_it:
                 save_solver(i)
         backup_state_files()
         if save:
             save_it(savedir, it)
+        t_iter = time.perf_counter() - t_iter
         if os.path.exists("convergence"):
             new_state = read_convergence()
             fsq = new_state.fsq
@@ -377,6 +451,10 @@ def runs(
             delta_e = abs(last_e - etot)
             last_e = etot
             log_convergence_step(fsq, etot, delta_e)
+            if not table_started:
+                _emit(report.table_header())
+                table_started = True
+            _emit([report.iteration_row(it, fsq, etot, delta_e, t_iter)])
         else:
             logger.warning(
                 "RSPt did not write a convergence file; cannot check convergence."
@@ -388,12 +466,27 @@ def runs(
             )
             break
 
-    logger.info(f"Ending SCF run after {it} iterations: {datetime.datetime.now()}")
-    logger.info(f"fsq = {fsq}")
-    logger.info(f"last total energy = {last_e}")
+    is_converged = converged(fsq, delta_e, fsq_conv, e_conv)
+    _emit(
+        report.summary_block(
+            converged=is_converged,
+            diverged=diverged,
+            fsq=fsq,
+            delta_e=delta_e,
+            etot=etot,
+            fsq_conv=fsq_conv,
+            e_conv=e_conv,
+            it=it,
+            performed=performed,
+            max_iter=max_iter,
+            elapsed=time.perf_counter() - t_start,
+        ),
+        level=report.SUMMARY,
+    )
+    logger.debug("Full log in runs.info, per-iteration convergence in runsConvgeLog")
 
     return dict(
-        converged=converged(fsq, delta_e, fsq_conv, e_conv),
+        converged=is_converged,
         diverged=diverged,
         fsq=fsq,
         delta_e=delta_e,

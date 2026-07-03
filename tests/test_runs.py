@@ -1,9 +1,13 @@
 import os
+import re
 import stat
+import subprocess
+import sys
 import textwrap
 
 import pytest
 
+from pyRSPthon.run.report import fmt_duration, fmt_target, set_style
 from pyRSPthon.run.runs import init_runs, read_convergence, runs
 
 
@@ -91,3 +95,103 @@ def test_failing_rspt_raises(workdir):
     (workdir / "fake_rspt.sh").write_text("#!/bin/bash\nexit 3\n")
     with pytest.raises(RuntimeError, match="Return value was 3"):
         run_driver()
+
+
+def test_fmt_duration():
+    assert fmt_duration(5.4) == "5s"
+    assert fmt_duration(83) == "1m 23s"
+    assert fmt_duration(7500) == "2h 05m"
+
+
+def test_fmt_target():
+    set_style(False)
+    assert fmt_target(1e-9) == "1.0e-09"
+    assert fmt_target(float("inf")) == "-"
+
+
+ANSI_RE = re.compile("\x1b\\[")
+ROW_RE = re.compile(r"^\s+\d+\s+\d\.\d{3}e[-+]\d\d\s")
+
+
+def run_cli(workdir, *flags):
+    return subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pyRSPthon.cli.py_runs",
+            "./fake_rspt.sh",
+            "-f",
+            "1e-3",
+            "-i",
+            "10",
+            "--no-check_rspt",
+            *flags,
+        ],
+        cwd=workdir,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+
+
+def test_cli_output_normal(workdir):
+    result = run_cli(workdir)
+    assert result.returncode == 0, result.stderr
+    out = result.stdout
+    # non-TTY stdout => plain ASCII, no escape codes
+    assert not ANSI_RE.search(out)
+    assert "SCF driver" in out
+    assert "fresh start" in out
+    rows = [line for line in out.splitlines() if ROW_RE.match(line)]
+    assert len(rows) == 4  # fsq 0.1, 0.01, 1e-3, 1e-4 < 1e-3
+    assert "CONVERGED after 4 iterations (4 this run)" in out
+    info = (workdir / "runs.info").read_text()
+    assert not ANSI_RE.search(info)
+    assert "CONVERGED" in info
+
+
+def test_cli_output_quiet(workdir):
+    result = run_cli(workdir, "-q")
+    assert result.returncode == 0, result.stderr
+    out = result.stdout
+    assert "SCF driver" not in out
+    assert not any(ROW_RE.match(line) for line in out.splitlines())
+    assert "CONVERGED" in out
+
+
+def test_cli_output_verbose(workdir):
+    result = run_cli(workdir, "-v")
+    assert result.returncode == 0, result.stderr
+    assert "RSPt took" in result.stdout
+    assert "FSQ" in result.stdout  # convergence-check breakdown
+
+
+BROKEN_GREEN = "mixing\n5 0.15\n"
+
+
+def test_broken_green_inp_aborts_before_running(workdir):
+    (workdir / "green.inp").write_text(BROKEN_GREEN)
+    with pytest.raises(RuntimeError, match="verification found"):
+        run_driver()
+    assert not os.path.exists("convergence")  # rspt never ran
+
+
+def test_no_verify_skips_green_check(workdir):
+    (workdir / "green.inp").write_text(BROKEN_GREEN)
+    result = run_cli(workdir, "--no-verify")
+    assert result.returncode == 0, result.stderr
+
+
+def test_cli_broken_green_inp_exits_1(workdir):
+    (workdir / "green.inp").write_text(BROKEN_GREEN)
+    result = run_cli(workdir)
+    assert result.returncode == 1
+    assert "unknown mix_method" in result.stdout + result.stderr
+
+
+def test_cli_not_converged_summary(workdir):
+    result = run_cli(workdir, "-f", "1e-30", "-i", "2")
+    assert result.returncode == 2
+    assert "NOT CONVERGED after 2 iterations (2 this run) [max iter = 2]" in (
+        result.stdout
+    )
