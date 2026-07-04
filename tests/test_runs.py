@@ -8,7 +8,13 @@ import textwrap
 import pytest
 
 from pyRSPthon.run.report import fmt_duration, fmt_target, set_style
-from pyRSPthon.run.runs import init_runs, read_convergence, runs
+from pyRSPthon.run.runs import (
+    init_runs,
+    read_convergence,
+    read_sigdiff,
+    runs,
+    solver_converged,
+)
 
 
 FAKE_RSPT = textwrap.dedent(
@@ -97,8 +103,57 @@ def test_failing_rspt_raises(workdir):
         run_driver()
 
 
+# dmft_hist as written by green_cycle.F90 (format '( 1x,a,2f12.8,2l3)')
+DMFT_HIST = textwrap.dedent(
+    """\
+     Total it, Solver it =            3           0  T
+     Chemical potential  =       0.7597360440408369  T  F
+     Number of electrons =      47.9995654532072962  F
+     Sigdiff (mats/real) =   0.10000000  0.90000000  F  F
+     Total it, Solver it =            4           0  T
+     Sigdiff (mats/real) =   0.00000000  0.24721384  T  F
+    """
+)
+
+
+def test_read_sigdiff_takes_last_line(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "dmft_hist").write_text(DMFT_HIST)
+    assert read_sigdiff() == (0.0, 0.24721384, True, False)
+
+
+def test_read_sigdiff_missing_or_garbled(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    assert read_sigdiff() is None  # no dmft_hist at all (plain DFT run)
+    (tmp_path / "dmft_hist").write_text(
+        " Sigdiff (mats/real) = ************  0.24721384  T  F\n"
+    )
+    assert read_sigdiff() is None
+    (tmp_path / "dmft_hist").write_text(
+        DMFT_HIST + " Sigdiff (mats/real) = ************  0.2  T  F\n"
+    )
+    assert read_sigdiff() == (0.0, 0.24721384, True, False)  # garbled tail skipped
+
+
+def test_solver_converged_reads_dmft_hist(tmp_path, monkeypatch, caplog):
+    """Regression: sigdiff must come from dmft_hist, not the verbose-gated
+    'sigdiff (mats/real):' line in out (absent without 'verbose Selfenergy',
+    which used to make the debug log report inf)."""
+    import logging
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "out").write_text("stuff\n ***main: Stop before density.\n")
+    (tmp_path / "dmft_hist").write_text(DMFT_HIST)
+    with caplog.at_level(logging.DEBUG, logger="pyRSPthon.runs"):
+        assert solver_converged() is False
+    assert "sigdiff  matsubara 0.000e+00 yes    real axis 2.472e-01 no" in caplog.text
+    (tmp_path / "out").write_text("no stop line here\n")
+    assert solver_converged() is True
+
+
 def test_fmt_duration():
-    assert fmt_duration(5.4) == "5s"
+    assert fmt_duration(5.4) == "5.4s"
+    assert fmt_duration(42) == "42s"
     assert fmt_duration(83) == "1m 23s"
     assert fmt_duration(7500) == "2h 05m"
 
@@ -162,8 +217,8 @@ def test_cli_output_quiet(workdir):
 def test_cli_output_verbose(workdir):
     result = run_cli(workdir, "-v")
     assert result.returncode == 0, result.stderr
-    assert "RSPt took" in result.stdout
-    assert "FSQ" in result.stdout  # convergence-check breakdown
+    assert "rspt took" in result.stdout
+    assert re.search(r"check\s+fsq \d\.\d{3}e[-+]\d\d < ", result.stdout)
 
 
 BROKEN_GREEN = "mixing\n5 0.15\n"

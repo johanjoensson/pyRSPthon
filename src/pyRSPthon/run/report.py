@@ -64,6 +64,8 @@ class ConsoleFormatter(logging.Formatter):
                 color = "red"
             elif record.levelno >= logging.WARNING:
                 color = "yellow"
+            elif record.levelno < logging.INFO:
+                color = "dim"
         return colorize(text, color)
 
 
@@ -86,6 +88,8 @@ def set_style(styled: bool):
 
 def fmt_duration(seconds: float) -> str:
     seconds = max(0.0, seconds)
+    if seconds < 10:
+        return f"{seconds:.1f}s"
     if seconds < 60:
         return f"{seconds:.0f}s"
     minutes, secs = divmod(round(seconds), 60)
@@ -153,6 +157,50 @@ def iteration_row(it, fsq, etot, delta_e, seconds):
             time=fmt_duration(seconds),
         ),
         None,
+    )
+
+
+def _mark(ok: bool) -> str:
+    if GLYPHS.styled:
+        return "✓" if ok else "✗"
+    return "yes" if ok else "no"
+
+
+def _value(value: float) -> str:
+    return f"{value:.3e}" if math.isfinite(value) else GLYPHS.dash
+
+
+def convergence_check(fsq, delta_e, fsq_conv, e_conv):
+    """One debug line per convergence test, only for active criteria."""
+    parts = []
+    if math.isfinite(fsq_conv):
+        parts.append(f"fsq {_value(fsq)} < {fmt_target(fsq_conv)} {_mark(fsq < fsq_conv)}")
+    if math.isfinite(e_conv):
+        parts.append(
+            f"{GLYPHS.delta} {_value(delta_e)} < {fmt_target(e_conv)} "
+            f"{_mark(delta_e < e_conv)}"
+        )
+    if not parts:
+        return None
+    return ("   check    " + "    ".join(parts), "dim")
+
+
+def rspt_time_line(seconds, attempt=1, max_attempts=1):
+    text = f"rspt took {fmt_duration(seconds)}"
+    if max_attempts > 1:
+        text = f"solver attempt {attempt}/{max_attempts}, {text}"
+    return (f"   {text}", "dim")
+
+
+def sigdiff_line(sigdiff):
+    """Self-energy convergence detail from dmft_hist (None when not found)."""
+    if sigdiff is None:
+        return ("   sigdiff  not reported in dmft_hist", "dim")
+    mats, real, mats_ok, real_ok = sigdiff
+    return (
+        f"   sigdiff  matsubara {_value(mats)} {_mark(mats_ok)}"
+        f"    real axis {_value(real)} {_mark(real_ok)}",
+        "dim",
     )
 
 

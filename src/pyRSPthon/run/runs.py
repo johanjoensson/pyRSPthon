@@ -170,10 +170,9 @@ def converged(fsq, delta_e, fsq_conv, e_conv):
     True  - if fsq is below fsq_conv and delta_e is below e_conv
     False - otherwise
     """
-    if fsq_conv < float("inf"):
-        logger.debug(f"FSQ    : {fsq:.3E} < {fsq_conv:.3E} ? {fsq < fsq_conv}")
-    if e_conv < float("inf"):
-        logger.debug(f"Delta E: {delta_e:.3E} < {e_conv:.3E} ? {delta_e < e_conv}")
+    check = report.convergence_check(fsq, delta_e, fsq_conv, e_conv)
+    if check is not None:
+        _emit([check], level=logging.DEBUG)
     return fsq < fsq_conv and delta_e < e_conv
 
 
@@ -195,6 +194,40 @@ def stop_requested():
     return None
 
 
+def read_sigdiff(hist_file="dmft_hist"):
+    """
+    Read the last self-energy difference reported by RSPt.
+
+    RSPt appends ' Sigdiff (mats/real) = <mats> <real> T/F T/F' to dmft_hist
+    every DMFT iteration (green_cycle.F90); the two logicals are the actual
+    convergence tests |sigdiff| <= sigma_acc. The similar line in 'out' is
+    only printed with 'verbose Selfenergy' in green.inp and its logicals mean
+    something else (sig_gave_lda), so dmft_hist is the reliable source.
+
+    Returns (sigdiff_mats, sigdiff_real, mats_conv, real_conv), or None if no
+    Sigdiff line is found.
+    """
+    result = None
+    try:
+        with open(hist_file, "rt") as f:
+            for line in f:
+                if "Sigdiff (mats/real)" not in line:
+                    continue
+                tmp = line.partition("=")[2].split()
+                try:
+                    result = (
+                        float(tmp[0]),
+                        float(tmp[1]),
+                        tmp[2] == "T",
+                        tmp[3] == "T",
+                    )
+                except (IndexError, ValueError):
+                    continue
+    except OSError:
+        return None
+    return result
+
+
 def solver_converged():
     """
     Check if the DMFT solver has converged.
@@ -203,25 +236,12 @@ def solver_converged():
     False - if the last iteration did not produce a new density
     True  - otherwise
     """
-    real_conv = False
-    sigdiff_real = float("inf")
-    mats_conv = False
-    sigdiff_mats = float("inf")
     with open("out", "rt") as f:
-        for line in f:
-            if "sigdiff (mats/real):" in line:
-                tmp = line.split()
-                sigdiff_mats = float(tmp[2])
-                mats_conv = tmp[8] == "T"
-                sigdiff_real = float(tmp[3])
-                real_conv = tmp[9] == "T"
-
-            if "Stop before density." in line:
-                logger.debug(
-                    f"    Sigdiff Matsubara: {sigdiff_mats:6.4f} {mats_conv}, Realaxis: {sigdiff_real:6.4f} {real_conv}"
-                )
-                return False
-    return True
+        stopped = any("Stop before density." in line for line in f)
+    if not stopped:
+        return True
+    _emit([report.sigdiff_line(read_sigdiff())], level=logging.DEBUG)
+    return False
 
 
 def save_solver(solver_it):
@@ -398,10 +418,12 @@ def runs(
         )
     )
     if state.it != 0:
-        logger.debug(f"previous fsq = {state.fsq}")
-        logger.debug(f"previous total energy = {state.etot}")
-    settings = " ".join(f"{key} = {value}" for key, value in kwargs.items())
-    logger.debug(f"Other settings: {settings}")
+        logger.debug(
+            f"   previous fsq {state.fsq:.3e}, etot {state.etot:.10f} Ry"
+        )
+    settings = ", ".join(f"{key} = {value}" for key, value in kwargs.items())
+    if settings:
+        logger.debug(f"   settings {settings}")
     with open("hist", "a") as f:
         f.write(f"run command: {run_command}\n")
     if verify_inputs:
@@ -417,7 +439,10 @@ def runs(
     it = state.it
     performed = 0
     table_started = False
-    while not converged(fsq, delta_e, fsq_conv, e_conv) and performed < max_iter:
+    while (
+        not (is_converged := converged(fsq, delta_e, fsq_conv, e_conv))
+        and performed < max_iter
+    ):
         it += 1
         performed += 1
         t_iter = time.perf_counter()
@@ -434,7 +459,10 @@ def runs(
             t_rspt = time.perf_counter()
             run_rspt(rspt_binary, run_prefix, **kwargs)
             t_rspt = time.perf_counter() - t_rspt
-            logger.debug(f"    RSPt took {t_rspt:5.3f} seconds")
+            _emit(
+                [report.rspt_time_line(t_rspt, i, max_solver_it)],
+                level=logging.DEBUG,
+            )
 
             if solver_converged():
                 break
@@ -466,7 +494,6 @@ def runs(
             )
             break
 
-    is_converged = converged(fsq, delta_e, fsq_conv, e_conv)
     _emit(
         report.summary_block(
             converged=is_converged,
