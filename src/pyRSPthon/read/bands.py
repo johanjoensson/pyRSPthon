@@ -41,6 +41,9 @@ class BandStructure:
     ticks: list = field(default_factory=list)
     tick_labels: list = field(default_factory=list)
     energy_unit: str = "Ry"
+    orb_start: int | None = None
+    orb_end: int | None = None
+    fermi_index: int | None = None
 
 
 _GPI_XTICS = re.compile(r"set xtics\s*\((.*)\)")
@@ -60,7 +63,8 @@ def parse_band_gpi(fname):
     meta = {}
     ytic_pairs = []
     with open(fname, "rt") as f:
-        for line in f:
+        lines = f.readlines()
+        for i, line in enumerate(lines):
             if line.lstrip().startswith("#"):
                 continue
             m = _GPI_KY.search(line)
@@ -83,6 +87,19 @@ def parse_band_gpi(fname):
                 ytic_pairs = [
                     (float(val), int(pos)) for val, pos in _GPI_TIC.findall(line)
                 ]
+            
+            # Extract orbital start and end index from proj loops
+            import re
+            m_loop = re.search(r'do for \[ie=\s*(\d+)\s*:\s*(\d+)\s*\]', line)
+            if m_loop and "orb_start" not in meta:
+                start_idx = int(m_loop.group(1))
+                end_idx = int(m_loop.group(2))
+                for j in range(1, 4):
+                    if i + j < len(lines) and "proj-" in lines[i+j]:
+                        meta["orb_start"] = start_idx - 1
+                        meta["orb_end"] = end_idx
+                        break
+
     if "ne" in meta and "record" in meta:
         meta["nk"] = meta["record"] // meta["ne"]
     if "ne" in meta and len(ytic_pairs) >= 2:
@@ -140,7 +157,16 @@ def read_spectral_bands(
     if header_meta:
         meta["nk"] = header_meta["nk"]
         meta["ne"] = header_meta["ne"]
-        
+        meta["energies"] = np.linspace(
+            header_meta["emin"], header_meta["emax"], header_meta["ne"]
+        )
+        meta["energy_unit"] = (
+            "Ry" if abs(header_meta["scale"] - 1.0) < 1e-3 else "eV"
+        )
+        if "fermi_index" in header_meta:
+            meta["fermi_index"] = header_meta["fermi_index"]
+
+
     nk = nk if nk is not None else meta.get("nk")
     ne = ne if ne is not None else meta.get("ne")
     if nk is None or ne is None:
@@ -169,6 +195,9 @@ def read_spectral_bands(
             else meta.get("tick_labels", [])
         ),
         energy_unit=energy_unit or meta.get("energy_unit", "Ry"),
+        orb_start=meta.get("orb_start"),
+        orb_end=meta.get("orb_end"),
+        fermi_index=meta.get("fermi_index"),
     )
 
 

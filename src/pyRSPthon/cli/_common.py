@@ -82,3 +82,47 @@ def finish_plots(args):
         plt.figure(num)
         plt.savefig(fname, bbox_inches="tight")
         print(f"Wrote {fname}")
+
+def parse_orbital_selection(spec, norb):
+    """
+    Parse an orbital selection like "0,2,4", "0-4" or "0+1,3-5" into a list
+    of index groups. Comma-separated entries plot separately (a range gives
+    one entry per index); '+'-joined indices/ranges form one summed group.
+    With spec None every orbital is its own group.
+    """
+    if spec is None:
+        return [[i] for i in range(norb)]
+
+    def expand(token):
+        token = token.strip()
+        if "-" in token and not token.startswith("-"):
+            lo, hi = (int(s) for s in token.split("-", 1))
+            if hi < lo:
+                raise ValueError(f"empty range {token!r}")
+            return list(range(lo, hi + 1))
+        return [int(token)]
+
+    picked = []
+    for part in spec.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            if "+" in part:
+                group = []
+                for sub in part.split("+"):
+                    if sub.strip():
+                        group.extend(expand(sub))
+                if group:
+                    picked.append(group)
+            else:
+                picked.extend([i] for i in expand(part))
+        except ValueError:
+            raise SystemExit(
+                f"Malformed orbital selection {part!r} "
+                '(expected e.g. "0,2,4", "0-4" or "0+1+2")'
+            )
+    bad = sorted({i for group in picked for i in group if i < 0 or i >= norb})
+    if bad:
+        raise SystemExit(f"Orbital indices {bad} out of range (0..{norb - 1})")
+    return picked

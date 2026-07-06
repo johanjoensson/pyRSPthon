@@ -9,25 +9,8 @@ second half up).
 from argparse import ArgumentParser
 import sys
 
-from pyRSPthon.cli._common import add_plot_arguments, apply_plot_style, finish_plots
+from pyRSPthon.cli._common import add_plot_arguments, apply_plot_style, finish_plots, parse_orbital_selection
 from pyRSPthon.cli.plot_band import add_band_arguments
-
-
-def parse_orbital_selection(spec, norb):
-    if spec is None:
-        return list(range(norb))
-    picked = []
-    for part in spec.split(","):
-        part = part.strip()
-        if "-" in part and not part.startswith("-"):
-            lo, hi = part.split("-")
-            picked.extend(range(int(lo), int(hi) + 1))
-        else:
-            picked.append(int(part))
-    bad = [i for i in picked if i < 0 or i >= norb]
-    if bad:
-        raise SystemExit(f"Orbital indices {bad} out of range (0..{norb - 1})")
-    return picked
 
 
 def run(args):
@@ -46,8 +29,7 @@ def run(args):
         tick_labels=args.labels,
     )
     
-    basis_id = None
-    orb_l = None
+    shells = None
     cfflag = False
     fullrel = False
     
@@ -63,7 +45,7 @@ def run(args):
     except Exception:
         pass
     
-    # Check if the extended Band_header contains the basis and l directly
+    # Check if the Band_header carries the correlated shells directly
     try:
         from pyRSPthon.read.band import peek_band_header
         prefix = args.directory
@@ -71,43 +53,32 @@ def run(args):
             prefix = prefix + "/"
         data_file = f"{prefix}pband-{args.cluster}.data"
         header_meta = peek_band_header(data_file)
-        if header_meta and 'basis' in header_meta and 'l' in header_meta:
-            basis_id = header_meta['basis']
-            orb_l = header_meta['l']
-            cfflag = bool(header_meta.get('cfflag', False))
+        if header_meta and header_meta.get("shells"):
+            shells = header_meta["shells"]
+            cfflag = bool(header_meta.get("cfflag", False))
     except Exception:
         pass
 
-    if basis_id is None or orb_l is None:
-        try:
-            from pyRSPthon.read.green import get_green
-            green = get_green(prefix=args.directory)
-            for cl in green.clusters:
-                if cl.label == args.cluster:
-                    if cl.orbitals:
-                        basis_id = cl.orbitals[0].basis
-                        orb_l = cl.orbitals[0].l
-                        cfflag = cl.cf
-                    break
-                if not cl.label and cl.orbitals:
-                    orb = cl.orbitals[0]
-                    fallback = f"t{orb.t}.e{orb.e}.l{orb.l}"
-                    if args.cluster.startswith(fallback):
-                        basis_id = orb.basis
-                        orb_l = orb.l
-                        cfflag = cl.cf
-                        break
-        except Exception:
-            pass
+    if shells is None:
+        shells, cfflag = bp.find_cluster_shells(args.cluster, args.directory)
 
-    if args.spin_sum and basis_id in (8, 9, 10, 11):
-        raise SystemExit(f"--spin-sum is invalid for a JJ basis (basis={basis_id}) because it would mix distinct j-manifolds.")
+    jj_bases = sorted(
+        {sh["basis"] for sh in shells or []} & {9, 10, 11}
+    )
+    if args.spin_sum and jj_bases:
+        raise SystemExit(f"--spin-sum is invalid for a JJ basis (basis={jj_bases}) because it would mix distinct j-manifolds.")
         
     if args.spin_sum and cfflag and fullrel:
         raise SystemExit("--spin-sum is invalid for fully relativistic crystal field (Cf) states. The states are mixed spinors, not spin-down/spin-up pairs.")
 
     n_data = bs.spectral.shape[2]
-    norb = n_data - args.orb_start
+    
+    orb_start = args.orb_start
+    if orb_start is None:
+        orb_start = bs.orb_start if bs.orb_start is not None else 1
+        
+    orb_end = bs.orb_end if bs.orb_end is not None else n_data
+    norb = orb_end - orb_start
     
     # In fully relativistic Cf mode, states are 2N independent spinors. Do not split them into down/up blocks.
     is_spin_split = (norb % 2 == 0)
@@ -118,19 +89,37 @@ def run(args):
         # Sum the two spin blocks (first half down, second half up)
         half = norb // 2
         summed = (
-            bs.spectral[:, :, args.orb_start : args.orb_start + half]
-            + bs.spectral[:, :, args.orb_start + half : args.orb_start + norb]
+            bs.spectral[:, :, orb_start : orb_start + half]
+            + bs.spectral[:, :, orb_start + half : orb_start + norb]
         )
         bs.spectral = np.concatenate([bs.spectral[:, :, :1], summed], axis=2)
         orb_columns = list(range(1, 1 + half))
-        default_labels = bp.orbital_labels(half, spin_split=False, basis_id=basis_id, l=orb_l, cfflag=cfflag)
+        default_labels = bp.shell_labels(shells, half, spin_split=False, cfflag=cfflag)
     else:
-        orb_columns = list(range(args.orb_start, n_data))
-        default_labels = bp.orbital_labels(norb, spin_split=is_spin_split, basis_id=basis_id, l=orb_l, cfflag=cfflag)
-    labels = args.orbital_labels or default_labels
+        orb_columns = list(range(orb_start, orb_end))
+        default_labels = bp.shell_labels(shells, norb, spin_split=is_spin_split, cfflag=cfflag)
+    labels = default_labels
     selection = parse_orbital_selection(args.orbitals, len(orb_columns))
-    columns = [orb_columns[i] for i in selection]
-    sel_labels = [labels[i] if i < len(labels) else f"orb {i}" for i in selection]
+    
+    columns = []
+    sel_labels = []
+    for i, group in enumerate(selection):
+        if len(group) == 1:
+            idx = group[0]
+            columns.append(orb_columns[idx])
+            sel_labels.append(labels[idx] if idx < len(labels) else f"orb {idx}")
+        else:
+            group_cols = [orb_columns[idx] for idx in group]
+            summed_col = np.sum(bs.spectral[:, :, group_cols], axis=2, keepdims=True)
+            bs.spectral = np.concatenate([bs.spectral, summed_col], axis=2)
+            columns.append(bs.spectral.shape[2] - 1)
+            group_labels = [labels[idx] if idx < len(labels) else f"orb {idx}" for idx in group]
+            sel_labels.append(" + ".join(group_labels))
+            
+    if args.orbital_labels:
+        for i, lab in enumerate(args.orbital_labels):
+            if i < len(sel_labels):
+                sel_labels[i] = lab
 
     # Total spectral weight
     fig, ax = plt.subplots()
@@ -171,7 +160,7 @@ def main():
     add_band_arguments(parser)
     parser.add_argument(
         "--orb-start",
-        default=1,
+        default=None,
         type=int,
         help="Column of the first orbital projection (default 1)",
     )

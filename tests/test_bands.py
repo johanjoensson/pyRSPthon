@@ -1,6 +1,9 @@
+import struct
+
 import numpy as np
 import pytest
 
+from pyRSPthon.read.band import peek_band_header
 from pyRSPthon.read.bands import (
     parse_band_gpi,
     read_bandfiles,
@@ -8,6 +11,72 @@ from pyRSPthon.read.bands import (
     read_fatbands,
     read_spectral_bands,
 )
+
+
+def build_band_header(shape, emin, emax, nfermi, scale, shells=(), cfflag=False):
+    """Python mirror of build_band_header in RSPt's green_spectrum.F90."""
+    nints = max(16, 13 + len(shells))
+    hdr = bytearray(4 * nints)
+    hdr[0:4] = b"RSPt"
+    struct.pack_into("<ii", hdr, 4, 1, 4 * nints)
+    struct.pack_into(f"<i{len(shape)}i", hdr, 12, len(shape), *shape)
+    struct.pack_into("<ffif", hdr, 32, emin, emax, nfermi, scale)
+    if shells:
+        struct.pack_into("4B", hdr, 48, int(cfflag), len(shells), 0, 0)
+        for n, (t, l, basis) in enumerate(shells):
+            struct.pack_into("4B", hdr, 52 + 4 * n, t, l, basis, 0)
+    return bytes(hdr)
+
+
+def test_peek_band_header_unprojected(tmp_path):
+    fname = tmp_path / "band.data"
+    fname.write_bytes(build_band_header((11, 30, 40), -5.0, 5.0, 15, 13.6057))
+    meta = peek_band_header(fname)
+    assert meta["n_data"] == 11
+    assert meta["ne"] == 30
+    assert meta["nk"] == 40
+    assert meta["fermi_index"] == 14
+    np.testing.assert_allclose(meta["emin"], -5.0)
+    np.testing.assert_allclose(meta["emax"], 5.0)
+    np.testing.assert_allclose(meta["scale"], 13.6057, rtol=1e-6)
+    assert "shells" not in meta
+
+
+def test_peek_band_header_shells(tmp_path):
+    fname = tmp_path / "pband-Fe.data"
+    shells = [(1, 2, 3), (2, 1, 0), (1, 3, 8), (2, 2, 0)]
+    # 4 shells: the header grows past the 16-int minimum (to 17 ints)
+    fname.write_bytes(
+        build_band_header((13, 30, 40), -0.4, 0.4, -15, 1.0, shells, cfflag=True)
+    )
+    meta = peek_band_header(fname)
+    assert meta["cfflag"] is True
+    assert meta["ncorr"] == 4
+    assert meta["shells"] == [
+        {"type": t, "l": l, "basis": b} for t, l, b in shells
+    ]
+    assert "fermi_index" not in meta  # negative nfermi means unknown
+    np.testing.assert_allclose(meta["scale"], 1.0)
+
+
+def test_peek_band_header_absent(tmp_path):
+    fname = tmp_path / "band.data"
+    fname.write_bytes(np.zeros(120, dtype=np.float32).tobytes())
+    assert peek_band_header(fname) is None
+    assert peek_band_header(tmp_path / "missing.data") is None
+
+
+def test_read_spectral_bands_from_header(tmp_path):
+    nk, ne, ncol = 12, 8, 3
+    header = build_band_header((ncol, ne, nk), -2.0, 2.0, 4, 13.6057)
+    payload = np.arange(nk * ne * ncol, dtype=np.float32)
+    (tmp_path / "band.data").write_bytes(header + payload.tobytes())
+    # no band.gpi and no green.inp: all metadata must come from the header
+    bs = read_spectral_bands(prefix=str(tmp_path))
+    assert bs.spectral.shape == (ne, nk, ncol)
+    assert bs.energy_unit == "eV"
+    assert bs.fermi_index == 3
+    np.testing.assert_allclose(bs.energies, np.linspace(-2.0, 2.0, ne), atol=1e-6)
 
 
 def test_parse_band_gpi(band_dir):
