@@ -36,11 +36,100 @@ ORBITAL_NAMES = {
 SPECTRAL_CMAP = "YlGnBu"
 
 
-def orbital_labels(norb, spin_split=False):
+def _frac(val):
+    return f"{int(round(val * 2))}/2"
+
+def orbital_labels(norb, spin_split=False, basis_id=None, l=None, cfflag=False):
     """
     Default labels for norb projected orbitals. With spin_split, the columns
     hold two spin blocks (first half down, second half up).
     """
+    if cfflag:
+        n = norb // 2 if (spin_split and norb % 2 == 0) else norb
+        half = [f"Cf state {i+1}" for i in range(n)]
+        if spin_split and norb % 2 == 0:
+            return [f"{lab} ↓" for lab in half] + [f"{lab} ↑" for lab in half]
+        return half
+
+    if basis_id in (8, 9, 10, 11) and l is not None:
+        j1 = l - 0.5
+        j2 = l + 0.5
+        labels = []
+        if j1 > 0:
+            m = -j1
+            while m <= j1 + 0.1:
+                labels.append(f"j={_frac(j1)}, m={_frac(m)}")
+                m += 1.0
+        m = -j2
+        while m <= j2 + 0.1:
+            labels.append(f"j={_frac(j2)}, m={_frac(m)}")
+            m += 1.0
+        return labels
+
+    if basis_id == 0 and l is not None:
+        half = [f"m={m}" for m in range(-l, l + 1)]
+        if spin_split:
+            return [f"{lab} ↓" for lab in half] + [f"{lab} ↑" for lab in half]
+        return half
+
+    if basis_id == 1:
+        if l == 1:
+            half = [r"p$_y$", r"p$_x$", r"p$_z$"]
+        elif l == 2:
+            half = [r"d$_{yz}$", r"d$_{xz}$", r"d$_{xy}$"]
+        elif l == 3:
+            half = [r"f$_{x(y^2-z^2)}$", r"f$_{y(z^2-x^2)}$", r"f$_{z(x^2-y^2)}$"]
+        else:
+            half = [f"orb {i}" for i in range(norb)]
+        if spin_split:
+            return [f"{lab} ↓" for lab in half] + [f"{lab} ↑" for lab in half]
+        return half
+
+    if basis_id == 2:
+        if l == 2:
+            half = [r"d$_{z^2}$", r"d$_{x^2-y^2}$"]
+        elif l == 3:
+            half = [r"f$_{x^3}$", r"f$_{y^3}$", r"f$_{z^3}$"]
+        else:
+            half = [f"orb {i}" for i in range(norb)]
+        if spin_split:
+            return [f"{lab} ↓" for lab in half] + [f"{lab} ↑" for lab in half]
+        return half
+
+    if basis_id == 3 and l == 2:
+        half = [r"d$_{z^2}$", r"d$_{x^2-y^2}$", r"d$_{yz}$", r"d$_{xz}$", r"d$_{xy}$"]
+        if spin_split:
+            return [f"{lab} ↓" for lab in half] + [f"{lab} ↑" for lab in half]
+        return half
+
+    if basis_id == 4 and l == 3:
+        half = [r"f$_{xyz}$"]
+        if spin_split:
+            return [f"{lab} ↓" for lab in half] + [f"{lab} ↑" for lab in half]
+        return half
+
+    if basis_id == 5 and l == 3:
+        half = [r"f$_{xyz}$", r"f$_{x(y^2-z^2)}$", r"f$_{y(z^2-x^2)}$", r"f$_{z(x^2-y^2)}$"]
+        if spin_split:
+            return [f"{lab} ↓" for lab in half] + [f"{lab} ↑" for lab in half]
+        return half
+
+    if basis_id == 6 and l == 3:
+        half = [r"f$_{xyz}$", r"f$_{x^3}$", r"f$_{y^3}$", r"f$_{z^3}$"]
+        if spin_split:
+            return [f"{lab} ↓" for lab in half] + [f"{lab} ↑" for lab in half]
+        return half
+
+    if basis_id == 7 and l == 3:
+        half = [
+            r"f$_{xyz}$",
+            r"f$_{x^3}$", r"f$_{y^3}$", r"f$_{z^3}$",
+            r"f$_{x(y^2-z^2)}$", r"f$_{y(z^2-x^2)}$", r"f$_{z(x^2-y^2)}$"
+        ]
+        if spin_split:
+            return [f"{lab} ↓" for lab in half] + [f"{lab} ↑" for lab in half]
+        return half
+
     if spin_split and norb % 2 == 0:
         half = orbital_labels(norb // 2)
         return [f"{lab} ↓" for lab in half] + [f"{lab} ↑" for lab in half]

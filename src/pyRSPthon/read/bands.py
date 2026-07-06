@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from .band import get_band, get_pband
+from .band import get_band, get_pband, peek_band_header
 from .green import get_green
 
 Ry_to_eV = 13.605703976
@@ -133,12 +133,20 @@ def read_spectral_bands(
     gpi_file = f"{prefix}{basename}.gpi"
     if os.path.exists(gpi_file):
         meta.update(parse_band_gpi(gpi_file))
+        
+    # Check if a Band_header is present in the binary data and takes precedence
+    data_file = f"{prefix}{basename}.data"
+    header_meta = peek_band_header(data_file)
+    if header_meta:
+        meta["nk"] = header_meta["nk"]
+        meta["ne"] = header_meta["ne"]
+        
     nk = nk if nk is not None else meta.get("nk")
     ne = ne if ne is not None else meta.get("ne")
     if nk is None or ne is None:
         raise RuntimeError(
             f"Could not determine nk/ne for {basename}.data — no usable "
-            f"{basename}.gpi or green.inp found; pass them explicitly "
+            f"{basename}.gpi or green.inp found, and no Band_header present in data file; pass them explicitly "
             "(plot_band: -nk/-ne)."
         )
     if energies is None:
