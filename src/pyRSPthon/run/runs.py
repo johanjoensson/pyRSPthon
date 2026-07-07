@@ -194,19 +194,59 @@ def stop_requested():
     return None
 
 
-def read_sigdiff(hist_file="dmft_hist"):
+# RSPt's fallback when green.inp gives no sigma_acc (green_init.F90)
+SIGMA_ACC_DEFAULT = 1e-4
+
+
+def read_sigma_acc(greeninp_file="green.inp"):
+    """
+    Read sigma_acc (the self-energy convergence criterion) from green.inp.
+    Falls back to RSPt's default when the file or the convergency block is
+    missing or unparseable.
+    """
+    from ..read.greeninp import parse_green_inp
+
+    try:
+        green, _ = parse_green_inp(greeninp_file)
+    except OSError:
+        return SIGMA_ACC_DEFAULT
+    if green.convergency is None:
+        return SIGMA_ACC_DEFAULT
+    return green.convergency[0][1]
+
+
+def read_sigdiff(hist_file="dmft_hist", sig_file="sig"):
     """
     Read the last self-energy difference reported by RSPt.
 
-    RSPt appends ' Sigdiff (mats/real) = <mats> <real> T/F T/F' to dmft_hist
-    every DMFT iteration (green_cycle.F90); the two logicals are the actual
-    convergence tests |sigdiff| <= sigma_acc. The similar line in 'out' is
-    only printed with 'verbose Selfenergy' in green.inp and its logicals mean
-    something else (sig_gave_lda), so dmft_hist is the reliable source.
+    The header of the binary sig file is the authoritative source: it is
+    updated by mix_sigma right after every solver run. In particular the
+    real-axis solvers run in the spectrum loop (green_spectrum.F90), after
+    the last 'Sigdiff (mats/real)' line of dmft_hist was written; those
+    dmft_hist lines echo the sigdiff stored in the sig header by the
+    *previous* RSPt run (green_cycle.F90 via selfenergy_read), so they lag
+    one invocation behind. The convergence flags are |sigdiff| <= sigma_acc
+    with sigma_acc from green.inp. The similar line in 'out' is only printed
+    with 'verbose Selfenergy' and its logicals mean something else
+    (sig_gave_lda).
 
-    Returns (sigdiff_mats, sigdiff_real, mats_conv, real_conv), or None if no
-    Sigdiff line is found.
+    dmft_hist is kept as a fallback for sig files older than version 7,
+    which do not store sigdiff_real.
+
+    Returns (sigdiff_mats, sigdiff_real, mats_conv, real_conv), or None if
+    neither source is available.
     """
+    from ..read.sig import read_sig_header
+
+    header = read_sig_header(sig_file)
+    if header is not None:
+        sigma_acc = read_sigma_acc()
+        return (
+            header.sigdiff_mats,
+            header.sigdiff_real,
+            abs(header.sigdiff_mats) <= sigma_acc,
+            abs(header.sigdiff_real) <= sigma_acc,
+        )
     result = None
     try:
         with open(hist_file, "rt") as f:

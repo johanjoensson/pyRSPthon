@@ -1,12 +1,14 @@
 import os
 import re
 import stat
+import struct
 import subprocess
 import sys
 import textwrap
 
 import pytest
 
+from pyRSPthon.read.sig import read_sig_header
 from pyRSPthon.run.report import fmt_duration, fmt_target, set_style
 from pyRSPthon.run.runs import (
     init_runs,
@@ -116,10 +118,80 @@ DMFT_HIST = textwrap.dedent(
 )
 
 
+def write_sig(path, sigdiff_mats=0.0, sigdiff_real=0.40542140, version=7):
+    """Write a sig file header as selfenergy_write (green_selfenergy.F90) does:
+    Fortran unformatted sequential records with 4-byte length markers."""
+    rec1 = struct.pack("<iii", 4, version, 4)
+    header = struct.pack(
+        "<2id2i3di4d3i",
+        1,  # line0 (number of clusters)
+        2048,  # n0 (matsubara mesh)
+        0.0025,  # t0 (temperature)
+        3001,  # emeshsize0
+        1501,  # nfermi0
+        6.667e-4,  # emeshdiff0
+        0.6975,  # green_mu
+        0.6975,  # green_mu_old
+        0,  # hsig_updated
+        24.0,  # nel_old
+        24.0,  # nel
+        sigdiff_mats,
+        sigdiff_real,
+        0,  # sig_green_mu
+        0,  # sig_gave_lda_mats
+        0,  # sig_gave_lda_real
+    )
+    rec2 = struct.pack("<i", len(header)) + header + struct.pack("<i", len(header))
+    path.write_bytes(rec1 + rec2)
+
+
+def test_read_sig_header(tmp_path):
+    write_sig(tmp_path / "sig")
+    header = read_sig_header(tmp_path / "sig")
+    assert header.version == 7
+    assert header.nmats == 2048
+    assert header.temperature == 0.0025
+    assert header.sigdiff_mats == 0.0
+    assert header.sigdiff_real == 0.40542140
+    assert header.sig_green_mu is False
+
+
+def test_read_sig_header_rejects_bad_files(tmp_path):
+    assert read_sig_header(tmp_path / "sig") is None  # missing
+    write_sig(tmp_path / "sig", version=6)  # too old for sigdiff_real
+    assert read_sig_header(tmp_path / "sig") is None
+    write_sig(tmp_path / "sig")
+    truncated = (tmp_path / "sig").read_bytes()[:40]
+    (tmp_path / "sig").write_bytes(truncated)
+    assert read_sig_header(tmp_path / "sig") is None
+    (tmp_path / "sig").write_text("not a sig file, much longer than a header")
+    assert read_sig_header(tmp_path / "sig") is None
+
+
 def test_read_sigdiff_takes_last_line(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     (tmp_path / "dmft_hist").write_text(DMFT_HIST)
     assert read_sigdiff() == (0.0, 0.24721384, True, False)
+
+
+def test_read_sigdiff_prefers_sig_header(tmp_path, monkeypatch):
+    """Regression: after a real-axis solver run the fresh sigdiff_real is only
+    in the sig header; the dmft_hist lines still describe the self-energy the
+    run started from (0/T on a fresh start)."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "dmft_hist").write_text(
+        " Sigdiff (mats/real) =   0.00000000  0.00000000  T  T\n"
+    )
+    write_sig(tmp_path / "sig")
+    (tmp_path / "green.inp").write_text("convergency\n 1e-6 1e-3 999 1\n")
+    assert read_sigdiff() == (0.0, 0.40542140, True, False)
+    # without green.inp the flags use RSPt's default sigma_acc = 1e-4
+    (tmp_path / "green.inp").unlink()
+    write_sig(tmp_path / "sig", sigdiff_mats=5e-4)
+    assert read_sigdiff() == (5e-4, 0.40542140, False, False)
+    # a pre-version-7 sig file has no sigdiff_real: fall back to dmft_hist
+    write_sig(tmp_path / "sig", version=6)
+    assert read_sigdiff() == (0.0, 0.0, True, True)
 
 
 def test_read_sigdiff_missing_or_garbled(tmp_path, monkeypatch):
