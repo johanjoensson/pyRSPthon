@@ -4,6 +4,19 @@ Shared band-structure plotting machinery for plot_band / plot_pband.
 
 import numpy as np
 
+# Shell/orbital structure helpers live in the shared pyRSPthon.orbitals
+# module (also used by the read layer); re-exported here so the existing
+# bp.orbital_labels / bp.shell_labels / bp.find_cluster_shells call sites
+# keep working.
+from pyRSPthon.orbitals import (  # noqa: F401
+    ORBITAL_NAMES,
+    orbital_labels,
+    shell_labels,
+    shell_orbital_count,
+    spin_split_indices,
+    find_cluster_shells,
+)
+
 # Colorblind-safe categorical colors (Okabe-Ito), assigned to orbitals in
 # fixed order.
 ORBITAL_COLORS = [
@@ -16,184 +29,35 @@ ORBITAL_COLORS = [
     "#F0E442",  # yellow
 ]
 
-# Real-harmonic orbital names per l channel, in RSPt's m = -l..l order.
-ORBITAL_NAMES = {
-    1: ["s"],
-    3: [r"p$_y$", r"p$_z$", r"p$_x$"],
-    5: [r"d$_{xy}$", r"d$_{yz}$", r"d$_{z^2}$", r"d$_{xz}$", r"d$_{x^2-y^2}$"],
-    7: [
-        r"f$_{y(3x^2-y^2)}$",
-        r"f$_{xyz}$",
-        r"f$_{yz^2}$",
-        r"f$_{z^3}$",
-        r"f$_{xz^2}$",
-        r"f$_{z(x^2-y^2)}$",
-        r"f$_{x(x^2-3y^2)}$",
-    ],
-}
-
 # Matches the palette RSPt itself puts in band.gpi (a YlGnBu-style ramp).
 SPECTRAL_CMAP = "YlGnBu"
 
 
-def _frac(val):
-    return f"{int(round(val * 2))}/2"
-
-
-# One spin block of RSPt's crystal-field bases (basis 1-7), by bit and l.
-# The basis id is bit-coded: 4 = A2u (f only), 2 = Eg (d) / T1u (f),
-# 1 = s / p / T2g (d) / T2u (f); blocks appear in the order 4, 2, 1.
-_CF_BIT1 = {
-    0: ["s"],
-    1: [r"p$_y$", r"p$_x$", r"p$_z$"],
-    2: [r"d$_{yz}$", r"d$_{xz}$", r"d$_{xy}$"],
-    3: [r"f$_{x(y^2-z^2)}$", r"f$_{y(z^2-x^2)}$", r"f$_{z(x^2-y^2)}$"],
-}
-_CF_BIT2 = {
-    2: [r"d$_{z^2}$", r"d$_{x^2-y^2}$"],
-    3: [r"f$_{x^3}$", r"f$_{y^3}$", r"f$_{z^3}$"],
-}
-_CF_BIT4 = {3: [r"f$_{xyz}$"]}
-
-
-def _cf_labels(basis_id, l):
+def spin_sum_columns(spectral, orb_start, norb, shells):
     """
-    One spin block of RSPt's crystal-field basis for one shell, following
-    lda_mlmsatomicqn in green_trunk_interface.F90: a bit is consumed only
-    when its l constraint matches, so e.g. basis 4-7 with a d shell all
-    give the full eg+t2g set, and any basis 1-7 with a p shell gives
-    py, px, pz.
+    Sum the spin-down and spin-up blocks of the orbital columns of a
+    spectral array (column 0 is the total, the norb orbital columns start at
+    orb_start). RSPt lays the orbitals out per correlated shell (a spin-down
+    block followed by that shell's spin-up block), so pair them with
+    spin_split_indices; fall back to a global first-half/second-half split
+    when the shells are unknown or do not match the column count
+    (single-shell case, where the two layouts coincide). Returns
+    (new_spectral, n_summed) where new_spectral keeps the total column
+    followed by the n_summed summed orbital columns.
     """
-    i = basis_id
-    half = []
-    if i >= 4 and l == 3:
-        i -= 4
-        half += _CF_BIT4[l]
-    if i >= 2 and l >= 2:
-        i -= 2
-        half += _CF_BIT2[l]
-    if i >= 1:
-        half += _CF_BIT1[l]
-    return half
-
-
-def orbital_labels(norb, spin_split=False, basis_id=None, l=None, cfflag=False):
-    """
-    Default labels for norb projected orbitals of one shell, matching the
-    local bases defined by lda_mlmsatomicqn in RSPt's
-    green_trunk_interface.F90. With spin_split, the columns hold two spin
-    blocks (first half down, second half up). Note that some crystal-field
-    bases (1-7) keep only a subset of the shell's orbitals (e.g. basis 1 =
-    t2g), so the label count can be smaller than 2l+1; many combinations
-    (any basis >= 3 for a d shell, basis 7 for f) still span the full
-    shell. With the cluster Cf flag the given basis is only the starting
-    point for the automatically generated crystal field states — a square
-    rotation that never changes the orbital count — so the labels are
-    generic.
-    """
-    if cfflag:
-        n = norb // 2 if (spin_split and norb % 2 == 0) else norb
-        half = [f"Cf state {i+1}" for i in range(n)]
-        if spin_split and norb % 2 == 0:
-            return [f"{lab} ↓" for lab in half] + [f"{lab} ↑" for lab in half]
-        return half
-
-    # JJ bases, quantized along the local z (9), x (10) or y (11) axis:
-    # the j = l-1/2 manifold followed by j = l+1/2, mj ascending in each.
-    if basis_id in (9, 10, 11) and l is not None:
-        msym = {9: "m", 10: r"m$_x$", 11: r"m$_y$"}[basis_id]
-        j1 = l - 0.5
-        j2 = l + 0.5
-        labels = []
-        if j1 > 0:
-            m = -j1
-            while m <= j1 + 0.1:
-                labels.append(f"j={_frac(j1)}, {msym}={_frac(m)}")
-                m += 1.0
-        m = -j2
-        while m <= j2 + 0.1:
-            labels.append(f"j={_frac(j2)}, {msym}={_frac(m)}")
-            m += 1.0
-        return labels
-
-    if basis_id is not None and 1 <= basis_id <= 7 and l is not None and 0 <= l <= 3:
-        half = _cf_labels(basis_id, l)
-        if spin_split:
-            return [f"{lab} ↓" for lab in half] + [f"{lab} ↑" for lab in half]
-        return half
-
-    # Everything else (0, 8, out-of-range ids) is the identity basis:
-    # complex spherical harmonics in m = -l..l order.
-    if basis_id is not None and l is not None:
-        half = [f"m={m}" for m in range(-l, l + 1)]
-        if spin_split:
-            return [f"{lab} ↓" for lab in half] + [f"{lab} ↑" for lab in half]
-        return half
-
-    if spin_split and norb % 2 == 0:
-        half = orbital_labels(norb // 2)
-        return [f"{lab} ↓" for lab in half] + [f"{lab} ↑" for lab in half]
-    if norb in ORBITAL_NAMES:
-        return list(ORBITAL_NAMES[norb])
-    return [f"orb {i}" for i in range(norb)]
-
-
-def shell_labels(shells, norb, spin_split=False, cfflag=False):
-    """
-    Default labels for the projected columns of a cluster given its
-    correlated shells ([{'type', 'l', 'basis'}, ...] in header order, e.g.
-    from peek_band_header). The per-shell orbital_labels are concatenated,
-    prefixed with the shell identity when there is more than one shell;
-    with spin_split the two spin blocks each hold all shells (first half
-    down, second half up).
-    """
-    if cfflag or not shells:
-        first = shells[0] if shells else {}
-        return orbital_labels(
-            norb,
-            spin_split=spin_split,
-            basis_id=first.get("basis"),
-            l=first.get("l"),
-            cfflag=cfflag,
-        )
-    half = []
-    for sh in shells:
-        labs = orbital_labels(2 * sh["l"] + 1, basis_id=sh["basis"], l=sh["l"])
-        if len(shells) > 1:
-            labs = [f"t{sh['type']} l{sh['l']} {lab}" for lab in labs]
-        half.extend(labs)
-    # jj bases carry both j-manifolds in one block; no down/up split applies
-    if spin_split and not any(sh["basis"] in (9, 10, 11) for sh in shells):
-        return [f"{lab} ↓" for lab in half] + [f"{lab} ↑" for lab in half]
-    return half
-
-
-def find_cluster_shells(cluster, directory="."):
-    """
-    Look up the correlated shells of a named cluster in green.inp.
-    Matches the explicit IdX label, the t.l.e.site.basis string of the first
-    orbital, or (for unlabeled clusters) RSPt's autogenerated t<T>.e<E>.l<L>...
-    name. Returns (shells, cfflag) shaped like the Band_header data
-    ([{'type', 'l', 'basis'}, ...]), or (None, False) if nothing matches.
-    """
-    import os
-    from pyRSPthon.read.greeninp import parse_green_inp
-
-    try:
-        green, _ = parse_green_inp(os.path.join(directory or ".", "green.inp"))
-    except Exception:
-        return None, False
-    for cl in green.clusters:
-        corr = [o for o in cl.orbitals if o.correlated] or cl.orbitals
-        if not corr:
-            continue
-        orb = corr[0]
-        names = (cl.label, f"{orb.t}{orb.l}{orb.e}{orb.site}{orb.basis}")
-        autoprefix = f"t{orb.t}.e{orb.e}.l{orb.l}"
-        if cluster in names or (not cl.label and cluster.startswith(autoprefix)):
-            shells = [{"type": o.t, "l": o.l, "basis": o.basis} for o in corr]
-            return shells, cl.cf
-    return None, False
+    split = spin_split_indices(shells)
+    if split is not None and len(split[0]) + len(split[1]) == norb:
+        down_idx, up_idx = split
+    else:
+        half = norb // 2
+        down_idx = list(range(half))
+        up_idx = list(range(half, norb))
+    summed = (
+        spectral[:, :, [orb_start + d for d in down_idx]]
+        + spectral[:, :, [orb_start + u for u in up_idx]]
+    )
+    new_spectral = np.concatenate([spectral[:, :, :1], summed], axis=2)
+    return new_spectral, summed.shape[2]
 
 
 def decorate_axes(ax, bs, emin=None, emax=None):

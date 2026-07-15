@@ -86,13 +86,9 @@ def run(args):
         is_spin_split = False
 
     if args.spin_sum and is_spin_split:
-        # Sum the two spin blocks (first half down, second half up)
-        half = norb // 2
-        summed = (
-            bs.spectral[:, :, orb_start : orb_start + half]
-            + bs.spectral[:, :, orb_start + half : orb_start + norb]
-        )
-        bs.spectral = np.concatenate([bs.spectral[:, :, :1], summed], axis=2)
+        # Sum each shell's spin-down block with its spin-up block (RSPt's
+        # per-shell down/up layout).
+        bs.spectral, half = bp.spin_sum_columns(bs.spectral, orb_start, norb, shells)
         orb_columns = list(range(1, 1 + half))
         default_labels = bp.shell_labels(shells, half, spin_split=False, cfflag=cfflag)
     else:

@@ -239,11 +239,15 @@ def test_shell_labels():
     labels = shell_labels([d, p], 8)
     assert labels[:5] == [f"t1 l2 m={m}" for m in range(-2, 3)]
     assert labels[5:] == [f"t2 l1 m={m}" for m in range(-1, 2)]
-    # spin blocks hold all shells: first half down, second half up
+    # each shell holds its own spin-down block then spin-up block, shells
+    # concatenated in header order (RSPt's per-shell layout): d(5)↓ d(5)↑
+    # then p(3)↓ p(3)↑
     labels = shell_labels([d, p], 16, spin_split=True)
     assert len(labels) == 16
     assert labels[0] == "t1 l2 m=-2 ↓"
-    assert labels[8] == "t1 l2 m=-2 ↑"
+    assert labels[5] == "t1 l2 m=-2 ↑"
+    assert labels[10] == "t2 l1 m=-1 ↓"
+    assert labels[13] == "t2 l1 m=-1 ↑"
     # jj bases carry both j-manifolds already; spin_split is ignored
     jj = {"type": 1, "l": 3, "basis": 9}
     assert len(shell_labels([jj], 14, spin_split=True)) == 14
@@ -251,6 +255,101 @@ def test_shell_labels():
     assert shell_labels([d, p], 4, cfflag=True) == [
         f"Cf state {i + 1}" for i in range(4)
     ]
+
+
+def test_spin_sum_columns():
+    import numpy as np
+
+    from pyRSPthon.cli._bandplot import spin_sum_columns
+
+    d = {"type": 1, "l": 2, "basis": 0}  # 5 orbitals
+    p = {"type": 2, "l": 1, "basis": 0}  # 3 orbitals
+    # column 0 is the total, orbital columns 1..16 each carry their own index
+    ncol = 1 + 16
+    spectral = np.tile(np.arange(ncol, dtype=float), (3, 4, 1))
+
+    # per-shell layout: d↓=1..5, d↑=6..10, p↓=11..13, p↑=14..16, so the
+    # summed columns pair d↓(1+i) with d↑(6+i) and p↓(11+i) with p↑(14+i)
+    summed, n = spin_sum_columns(spectral, orb_start=1, norb=16, shells=[d, p])
+    assert n == 8
+    np.testing.assert_array_equal(summed[0, 0], [0, 7, 9, 11, 13, 15, 25, 27, 29])
+
+    # without shell info it falls back to the global first-half/second-half
+    # split: column 1+k pairs with column 9+k
+    summed_fb, n_fb = spin_sum_columns(spectral, orb_start=1, norb=16, shells=None)
+    assert n_fb == 8
+    np.testing.assert_array_equal(
+        summed_fb[0, 0], [0, 10, 12, 14, 16, 18, 20, 22, 24]
+    )
+
+
+def test_plot_pband_spin_sum_output(tmp_path):
+    # A synthetic two-shell (d + p) cluster: pband binary + gpi + green.inp,
+    # exercising plot_pband --spin-sum end to end.
+    import numpy as np
+
+    nk, ne, norb = 12, 8, 16
+    ncol = 1 + norb
+    A = np.zeros((nk, ne, ncol), dtype=np.float32)
+    A[:, :, 0] = 1.0
+    for o in range(norb):
+        A[:, :, 1 + o] = (o + 1) / norb
+    A.tofile(tmp_path / "pband-DP.data")
+    gpi = (
+        ' set ylabel "Energy (eV)"\n'
+        f' set xtics ("{{/Symbol G}}" 0 ,"X" {nk - 1} )\n'
+        f' set ytics ("-5.0" 0 ,"5.0" {ne - 1} )\n'
+        f" ky(x) = (int(x)%{ne})\n"
+        f" kx(x) = int(x)/{ne}\n"
+        f" p [0:{nk - 1}] 'pband-DP.data' binary record={nk * ne}"
+        ' format="%float%*16float" u (kx($0)):(ky($0)):1 w image\n'
+    )
+    (tmp_path / "pband-DP.gpi").write_text(gpi)
+    (tmp_path / "green.inp").write_text(
+        "cluster\n2 IdDP\n1 2 1 1 0 0.59 0.60 0.38\n"
+        "2 1 1 1 0 0.59 0.60 0.38\n2 2 1.0\n"
+    )
+    out = tmp_path / "pband.png"
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pyRSPthon.cli.plot_pband",
+            "DP",
+            "-d",
+            str(tmp_path),
+            "-o",
+            str(out),
+            "--spin-sum",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert result.returncode == 0, result.stderr
+    # total panel + 8 spin-summed orbital panels (one per d/p orbital)
+    assert len(list(tmp_path.glob("pband-*.png"))) == 9
+
+
+def test_spin_split_indices():
+    from pyRSPthon.orbitals import spin_split_indices
+
+    # SMO Valence: shells p, d(basis 3), p, p, p -> per-spin counts 3,5,3,3,3
+    shells = [
+        {"type": 1, "l": 1, "basis": 1},
+        {"type": 2, "l": 2, "basis": 3},
+        {"type": 3, "l": 1, "basis": 1},
+        {"type": 3, "l": 1, "basis": 1},
+        {"type": 3, "l": 1, "basis": 1},
+    ]
+    down_idx, up_idx = spin_split_indices(shells)
+    assert down_idx == [0, 1, 2, 6, 7, 8, 9, 10, 16, 17, 18, 22, 23, 24, 28, 29, 30]
+    assert up_idx == [3, 4, 5, 11, 12, 13, 14, 15, 19, 20, 21, 25, 26, 27, 31, 32, 33]
+    # every column is covered exactly once, 34 orbitals total
+    assert sorted(down_idx + up_idx) == list(range(34))
+    # jj bases are a single non-split block, and empty input is undefined
+    assert spin_split_indices([{"type": 1, "l": 3, "basis": 9}]) is None
+    assert spin_split_indices(None) is None
 
 
 def test_orbital_labels_bases():

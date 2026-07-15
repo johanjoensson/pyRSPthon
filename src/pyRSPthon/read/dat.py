@@ -247,37 +247,46 @@ def extract_dat(dataname, cluster, prefix="."):
         )
 
     # With spin polarization but no explicit spin columns, the diagonal
-    # orbital entries hold the two spin channels: first half down, second half up.
+    # orbital entries hold the two spin channels. RSPt lays the orbitals out
+    # per correlated shell (a spin-down block followed by that shell's spin-up
+    # block), so look the shells up in green.inp to pick out the down/up
+    # columns; fall back to a global first-half/second-half split when the
+    # shells are unknown (single-shell case, where the two layouts coincide).
     up_data = None
     dn_data = None
+    orb_diag = None
+    if orb_data is not None and orb_data.shape[1] > 0:
+        orb_diag = (
+            np.diagonal(orb_data, axis1=1, axis2=2) if orb_data.ndim == 3 else orb_data
+        )
+    down_idx = up_idx = None
+    if orb_diag is not None and orb_diag.shape[1] % 2 == 0:
+        from pyRSPthon.orbitals import find_cluster_shells, spin_split_indices
+
+        shells, _ = find_cluster_shells(cluster, prefix)
+        split = spin_split_indices(shells)
+        if split is not None and len(split[0]) + len(split[1]) == orb_diag.shape[1]:
+            down_idx, up_idx = split
+        else:
+            half = orb_diag.shape[1] // 2
+            down_idx = list(range(half))
+            up_idx = list(range(half, orb_diag.shape[1]))
     if "down" in cols:
         dn_data = dat[:, cols["down"]]
-    elif orb_data is not None and orb_data.shape[1] % 2 == 0 and orb_data.shape[1] > 0:
+    elif down_idx is not None:
         print(
             f"{realname}, {imagname} do not contain any spin down projected data. "
-            "Assuming I can sum the first half of the diagonal orbital terms."
+            "Assuming I can sum the spin-down orbital terms."
         )
-        if orb_data.ndim == 3:
-            dn_data = np.sum(
-                np.diagonal(orb_data, axis1=1, axis2=2)[:, : orb_data.shape[1] // 2],
-                axis=1,
-            )
-        else:
-            dn_data = np.sum(orb_data[:, : orb_data.shape[1] // 2], axis=1)
+        dn_data = np.sum(orb_diag[:, down_idx], axis=1)
     if "up" in cols:
         up_data = dat[:, cols["up"]]
-    elif orb_data is not None and orb_data.shape[1] % 2 == 0 and orb_data.shape[1] > 0:
+    elif up_idx is not None:
         print(
             f"{realname}, {imagname} do not contain any spin up projected data. "
-            "Assuming I can sum the second half of the diagonal orbital terms."
+            "Assuming I can sum the spin-up orbital terms."
         )
-        if orb_data.ndim == 3:
-            up_data = np.sum(
-                np.diagonal(orb_data, axis1=1, axis2=2)[:, orb_data.shape[1] // 2 :],
-                axis=1,
-            )
-        else:
-            up_data = np.sum(orb_data[:, orb_data.shape[1] // 2 :], axis=1)
+        up_data = np.sum(orb_diag[:, up_idx], axis=1)
 
     blocks = None
     if indexmap is not None:
