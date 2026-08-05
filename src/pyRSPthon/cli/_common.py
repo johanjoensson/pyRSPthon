@@ -10,24 +10,29 @@ def add_plot_arguments(parser, cluster=False):
     Add the options shared by all plot CLIs: directory, output file and
     basic figure styling.
     """
+    io_group = parser.add_argument_group("I/O Options")
     if cluster:
-        parser.add_argument("cluster", type=str, help="Cluster to plot.")
-    parser.add_argument(
+        io_group.add_argument("cluster", type=str, help="Cluster to plot.")
+    io_group.add_argument(
         "-d",
         "--directory",
         default=".",
         type=str,
+        metavar="DIR",
         help="Look for files in this directory.",
     )
-    parser.add_argument(
+    io_group.add_argument(
         "-o",
         "--output",
         default=None,
         type=str,
+        metavar="FILE",
         help="Save the figure(s) to this file instead of showing them "
         "(multiple figures get numbered suffixes).",
     )
-    parser.add_argument(
+    
+    fmt_group = parser.add_argument_group("Plot Formatting Options")
+    fmt_group.add_argument(
         "--figsize",
         nargs=2,
         type=float,
@@ -35,9 +40,9 @@ def add_plot_arguments(parser, cluster=False):
         metavar=("W", "H"),
         help="Figure size in inches.",
     )
-    parser.add_argument("--dpi", type=float, default=None, help="Figure DPI.")
-    parser.add_argument(
-        "--font-size", type=float, default=None, help="Base font size."
+    fmt_group.add_argument("--dpi", type=float, default=None, metavar="INT", help="Figure DPI.")
+    fmt_group.add_argument(
+        "--font-size", type=float, default=None, metavar="PT", help="Base font size."
     )
 
 

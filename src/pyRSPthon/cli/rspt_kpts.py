@@ -6,7 +6,7 @@ ONLY with the symmetry operations RSPt knows (parsed from symcof); see
 pyRSPthon.kpts.grid for why this matters.
 """
 
-from argparse import ArgumentParser
+from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
 import os
 import sys
 
@@ -121,21 +121,23 @@ def path_command(args):
 
 
 def main():
-    parser = ArgumentParser(description=__doc__)
+    parser = ArgumentParser(description=__doc__, formatter_class=ArgumentDefaultsHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
 
-    grid = sub.add_parser("grid", help="Generate a k-point mesh (spts)")
+    grid = sub.add_parser("grid", help="Generate a k-point mesh (spts)", formatter_class=ArgumentDefaultsHelpFormatter)
     add_cell_arguments(grid)
     grid.add_argument(
-        "-n", "--nk", nargs=3, type=int, default=None, metavar=("N1", "N2", "N3")
+        "-n", "--nk", nargs=3, type=int, default=None, metavar=("N1", "N2", "N3"),
+        help="Generate a standard Monkhorst-Pack grid with N1 x N2 x N3 k-points.",
     )
     grid.add_argument(
         "--min-distance",
         type=float,
         default=None,
-        help="Pick the grid with kpLib for this minimum periodic distance (Å) "
-        "instead of giving -n (needs the kpLib extra; kpLib's search can be "
-        "very slow for some primitive cells — prefer -n if it stalls)",
+        metavar="FLOAT",
+        help="Generate grid using kpLib ensuring this minimum periodic distance (Å) "
+        "between k-points (scales inversely with real-space lattice). "
+        "Warning: kpLib search can stall for highly skewed/large primitive cells; prefer -n if it hangs.",
     )
     grid.add_argument(
         "--shift",
@@ -158,18 +160,23 @@ def main():
         nargs=9,
         type=int,
         default=None,
+        metavar="INT",
         help="Supercell map matrix (9 ints, row-major; cub.inp M). Default: identity",
     )
     grid.add_argument(
         "--symcof",
         type=str,
         default="symcof",
-        help="Symmetry file used for reduction (default: symcof)",
+        metavar="FILE",
+        help="Symmetry file used for reduction to the Irreducible Brillouin Zone (IBZ). "
+        "Crucial for SCF integrations to have correct weights. "
+        "Do not use external symmetries not present in symcof.",
     )
     grid.add_argument(
         "--time-reversal",
         action="store_true",
-        help="Also reduce with -k. Only use if RSPt applies time reversal too!",
+        help="Also reduce with time reversal (-k). WARNING: Disable this if calculating magnetic structures "
+        "where time-reversal symmetry is broken, otherwise you may artificially force zero magnetization.",
     )
     grid.add_argument(
         "--unreduced", action="store_true", help="Write the full grid, no reduction"
@@ -177,7 +184,7 @@ def main():
     grid.add_argument("-o", "--output", type=str, default="spts")
     grid.set_defaults(func=grid_command)
 
-    path = sub.add_parser("path", help="Generate a band path (spts.band)")
+    path = sub.add_parser("path", help="Generate a band path (spts.band)", formatter_class=ArgumentDefaultsHelpFormatter)
     add_cell_arguments(path)
     path.add_argument(
         "path",

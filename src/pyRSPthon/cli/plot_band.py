@@ -8,7 +8,7 @@ Sources are auto-detected in the working directory (override with --source):
 - eigenvalues: raw eigenvalue file (no evconv needed)
 """
 
-from argparse import ArgumentParser
+from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
 import glob
 import os
 import sys
@@ -113,49 +113,63 @@ def run(args):
 
 
 def add_band_arguments(parser):
-    parser.add_argument(
+    band_group = parser.add_argument_group("Band Data Options")
+    band_group.add_argument(
         "--source",
         choices=["spectral", "bandfiles", "fatbands", "eigenvalues"],
         default=None,
         help="Data source (default: auto-detect)",
     )
-    parser.add_argument(
+    band_group.add_argument(
         "-nk",
         "--num_k",
         default=None,
         type=int,
+        metavar="INT",
         help="k-points in the path (spectral; usually auto-detected)",
     )
-    parser.add_argument(
+    band_group.add_argument(
         "-ne",
         "--num_e",
         default=None,
         type=int,
+        metavar="INT",
         help="energy mesh points (spectral; usually auto-detected)",
     )
-    parser.add_argument("--emin", default=None, type=float, help="Lower plot bound")
-    parser.add_argument("--emax", default=None, type=float, help="Upper plot bound")
-    parser.add_argument(
+    
+    fmt_group = parser.add_argument_group("Band Formatting Options")
+    fmt_group.add_argument("--emin", default=None, type=float, metavar="FLOAT", help="Lower plot bound")
+    fmt_group.add_argument("--emax", default=None, type=float, metavar="FLOAT", help="Upper plot bound")
+    fmt_group.add_argument(
         "-x",
         "--xticks",
         default=None,
         type=int,
         nargs="+",
+        metavar="INT",
         help="Symmetry-point indices (spectral; usually auto-detected)",
     )
-    parser.add_argument(
+    fmt_group.add_argument(
         "-l",
         "--labels",
         default=None,
         type=str,
         nargs="+",
+        metavar="STR",
         help="Symmetry-point labels (usually auto-detected)",
     )
-    parser.add_argument("--log", action="store_true", help="Logarithmic intensity")
+    fmt_group.add_argument("--log", action="store_true", help="Logarithmic intensity")
 
 
 def main():
-    parser = ArgumentParser(description=__doc__)
+    parser = ArgumentParser(
+        description=__doc__ + "\n\n"
+                    "Physics Conventions:\n"
+                    "- For pure DFT (bandfiles/fatbands/eigenvalues), plots sharp eigenvalues (ε_nk).\n"
+                    "- For DFT+DMFT (band.data), plots the continuous interacting spectral function A(k,ω).\n"
+                    "- The energy reference is shifted by the Fermi energy (E - E_F = 0) unless --efermi is explicitly changed.",
+        formatter_class=ArgumentDefaultsHelpFormatter,
+    )
     add_plot_arguments(parser)
     add_band_arguments(parser)
     parser.add_argument(

@@ -9,13 +9,33 @@ easier to use, script and modify.
 
 ## Installation
 
+We recommend installing `pyRSPthon` inside a virtual environment (e.g. using `venv` or `uv`).
+
 ```sh
-pip install .            # core: readers, plotting, run driver
-pip install .[symmetry]  # + spglib-based symmetry validation
-pip install .[kpoints]   # + kpLib generalized k-point grids
+# Standard installation
+pip install .
+
+# Install with optional dependencies (note the quotes, which are required for zsh/macOS)
+pip install ".[symmetry]"  # + spglib-based symmetry validation
+pip install ".[kpoints]"   # + kpLib generalized k-point grids
+pip install ".[symmetry,kpoints]"
+
+# For development (installs in editable mode)
+pip install -e ".[dev]"
 ```
 
 Requires Python >= 3.10.
+
+## Architecture & Design
+
+`pyRSPthon` follows a layered architectural design separating business logic from the presentation layer:
+
+1. **Layer 1 (Core)**: `orbitals.py` provides underlying data structures.
+2. **Layer 2 (I/O & Adapters)**: `read/`, `write/`, and `ase/`. The `read()` functions return custom Data Transfer Objects (e.g. `NamedTuple` or `dataclass` representations of spectra). The `ase` module provides adapters converting core RSPt data to ASE `Atoms` objects.
+3. **Layer 3 (Business Logic)**: `kpts/`, `verify/`, and `run/`. Contains the core algorithmic logic for k-point generation, green.inp verification, and SCF loop execution.
+4. **Layer 4 (Presentation)**: `cli/`. Command-line entry points. 
+
+**Strict CLI Rule**: CLI scripts in `src/pyRSPthon/cli/` are strictly thin wrappers that handle `argparse` and direct standard I/O. All heavy lifting and logic lives in the core library. This ensures that users can programmatically invoke all functionality by importing from `pyRSPthon.read`, `pyRSPthon.run`, etc.
 
 ## Command line tools
 

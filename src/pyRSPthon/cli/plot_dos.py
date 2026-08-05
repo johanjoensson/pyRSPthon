@@ -1,4 +1,4 @@
-from argparse import ArgumentParser
+from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
 
 from pyRSPthon.cli._common import add_plot_arguments, apply_plot_style, finish_plots
 from pyRSPthon.read import extract_dos
@@ -31,7 +31,14 @@ def run(args):
 
 
 def main():
-    parser = ArgumentParser(description="Plot dos.dat file")
+    parser = ArgumentParser(
+        description="Generate a Density of States (DOS) plot from RSPt output (dos.dat).\n\n"
+                    "Physics Conventions:\n"
+                    "- Energy reference: E - E_F = 0 (Fermi energy is shifted to 0).\n"
+                    "- Spin: Up (solid) is positive, Down (dashed) is plotted on the same positive scale.\n"
+                    "- Smearing: Uses the numerical smearing already applied by RSPt in dos.dat.",
+        formatter_class=ArgumentDefaultsHelpFormatter,
+    )
     add_plot_arguments(parser)
     args = parser.parse_args()
     apply_plot_style(args)

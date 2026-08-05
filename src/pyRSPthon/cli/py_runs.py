@@ -1,4 +1,4 @@
-from argparse import ArgumentParser
+from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
 from pyRSPthon.run import runs
 from pyRSPthon.run import report
 import shlex
@@ -27,57 +27,75 @@ def run(runcommand: list[str], run_prefix: str, **kwargs):
 def main():
     parser = ArgumentParser(
         description="Run SCF calculations with RSPt.",
-        epilog="exit codes: 0 converged, 1 error, 2 not converged "
-        "(max iterations reached or diverged)",
+        formatter_class=ArgumentDefaultsHelpFormatter,
+        epilog=(
+            "exit codes: 0 converged, 1 error, 2 not converged (max iterations reached or diverged).\n"
+            "Note on loops: --max_iter controls the outer SCF/charge self-consistency loop. "
+            "For DMFT calculations, --max_solver_it controls the inner impurity solver loop."
+        ),
     )
-    parser.add_argument(
+    
+    run_group = parser.add_argument_group("Launcher Options")
+    run_group.add_argument(
         "runcommand",
         nargs="+",
         type=str,
         help="RSPt executable, optionally preceded by launcher arguments "
         '(ex. "rspt" or "-n 64 rspt" together with --run-prefix mpirun)',
     )
-    parser.add_argument(
+    run_group.add_argument(
+        "--run-prefix",
+        type=str,
+        default="",
+        metavar="CMD",
+        help='Launcher command (ex. "mpirun -n 64" or "srun -n 128 -c 2")',
+    )
+    
+    conv_group = parser.add_argument_group("Convergence Criteria")
+    conv_group.add_argument(
         "--fsq_conv",
         "-f",
         type=float,
         required=True,
-        help="Convergence criterion for FSQ",
+        metavar="FLOAT",
+        help="Primary convergence criterion: Force square (fsq) convergence threshold in (Ry/Bohr)^2.",
     )
-    parser.add_argument(
-        "--max_iter",
-        "-i",
-        type=int,
-        required=True,
-        help="Maximum number of SCF iterations to run",
-    )
-    parser.add_argument(
+    conv_group.add_argument(
         "--e_conv",
         "-e",
         type=float,
         default=float("inf"),
-        help="Convergence criterion for the total energy change",
+        metavar="FLOAT",
+        help="Energy convergence threshold in Rydbergs (Ry). Note: total energy convergence is not always monotonic during SCF.",
     )
-    parser.add_argument("--max_solver_it", type=int, default=1)
-    parser.add_argument("--max_core_leakage", type=float, default=1e-3)
-    parser.add_argument("--h_max", type=int, default=3)
-    parser.add_argument("--max_boundary_mismatch", type=float, default=1e-3)
-    parser.add_argument("--no-check_rspt", action="store_false", dest="check_rspt")
-    parser.add_argument(
-        "--run-prefix",
-        type=str,
-        default="",
-        help='Launcher command (ex. "mpirun -n 64" or "srun -n 128 -c 2")',
+    conv_group.add_argument(
+        "--max_iter",
+        "-i",
+        type=int,
+        required=True,
+        metavar="INT",
+        help="Maximum number of outer SCF iterations to run.",
     )
-    parser.add_argument("--save", action="store_true")
-    parser.add_argument("--save_solver_it", action="store_true")
-    parser.add_argument(
+    
+    basis_group = parser.add_argument_group("Basis & Physical Checks")
+    basis_group.add_argument("--max_core_leakage", type=float, default=1e-3, metavar="FLOAT", help="Basis sanity check: max allowed core state leakage beyond muffin-tin spheres.")
+    basis_group.add_argument("--max_boundary_mismatch", type=float, default=1e-3, metavar="FLOAT", help="Basis sanity check: max allowed mismatch at muffin-tin boundaries.")
+    
+    solver_group = parser.add_argument_group("DMFT / Solver Options")
+    solver_group.add_argument("--max_solver_it", type=int, default=1, metavar="INT", help="Maximum number of inner impurity solver iterations per SCF step.")
+    solver_group.add_argument("--h_max", type=int, default=3, metavar="INT", help="Solver iterations parameter (h_max).")
+    solver_group.add_argument("--save_solver_it", action="store_true", help="Save intermediate solver iterations.")
+    
+    misc_group = parser.add_argument_group("Miscellaneous Options")
+    misc_group.add_argument("--no-check_rspt", action="store_false", dest="check_rspt", help="Disable checking RSPt executable.")
+    misc_group.add_argument("--save", action="store_true", help="Save calculation state.")
+    misc_group.add_argument(
         "--no-verify",
         action="store_false",
         dest="verify_inputs",
         help="Skip the green.inp verification before the first iteration",
     )
-    verbosity = parser.add_mutually_exclusive_group()
+    verbosity = misc_group.add_mutually_exclusive_group()
     verbosity.add_argument(
         "--quiet",
         "-q",
