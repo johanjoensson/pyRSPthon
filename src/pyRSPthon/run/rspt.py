@@ -214,8 +214,13 @@ def follow_lines(fname: str, proc: subprocess.Popen, poll_interval: float = 0.5)
     """
     while not os.path.exists(fname):
         if proc.poll() is not None:
-            return
-        time.sleep(poll_interval)
+            if not os.path.exists(fname):
+                return
+            break
+        try:
+            proc.wait(timeout=poll_interval)
+        except subprocess.TimeoutExpired:
+            pass
     with open(fname, "rt") as f:
         buf = ""
         while True:
@@ -227,10 +232,21 @@ def follow_lines(fname: str, proc: subprocess.Popen, poll_interval: float = 0.5)
                     buf = ""
                 continue
             if proc.poll() is not None:
+                while True:
+                    chunk = f.readline()
+                    if not chunk:
+                        break
+                    buf += chunk
+                    if buf.endswith("\n"):
+                        yield buf
+                        buf = ""
                 if buf:
                     yield buf
                 return
-            time.sleep(poll_interval)
+            try:
+                proc.wait(timeout=poll_interval)
+            except subprocess.TimeoutExpired:
+                pass
 
 
 def check_early_fail(proc: subprocess.Popen):

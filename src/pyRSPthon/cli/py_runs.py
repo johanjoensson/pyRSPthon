@@ -34,14 +34,14 @@ def main():
             "For DMFT calculations, --max_solver_it controls the inner impurity solver loop."
         ),
     )
-    
+
     run_group = parser.add_argument_group("Launcher Options")
     run_group.add_argument(
         "runcommand",
         nargs="+",
         type=str,
         help="RSPt executable, optionally preceded by launcher arguments "
-        '(ex. "rspt" or "-n 64 rspt" together with --run-prefix mpirun)',
+        '(ex. "rspt", "mpirun -n 64 rspt" or "rspt" together with --run-prefix mpirun -n 64)',
     )
     run_group.add_argument(
         "--run-prefix",
@@ -50,7 +50,7 @@ def main():
         metavar="CMD",
         help='Launcher command (ex. "mpirun -n 64" or "srun -n 128 -c 2")',
     )
-    
+
     conv_group = parser.add_argument_group("Convergence Criteria")
     conv_group.add_argument(
         "--fsq_conv",
@@ -76,19 +76,54 @@ def main():
         metavar="INT",
         help="Maximum number of outer SCF iterations to run.",
     )
-    
+
     basis_group = parser.add_argument_group("Basis & Physical Checks")
-    basis_group.add_argument("--max_core_leakage", type=float, default=1e-3, metavar="FLOAT", help="Basis sanity check: max allowed core state leakage beyond muffin-tin spheres.")
-    basis_group.add_argument("--max_boundary_mismatch", type=float, default=1e-3, metavar="FLOAT", help="Basis sanity check: max allowed mismatch at muffin-tin boundaries.")
-    
+    basis_group.add_argument(
+        "--max_core_leakage",
+        type=float,
+        default=1e-3,
+        metavar="FLOAT",
+        help="Basis sanity check: max allowed core state leakage beyond muffin-tin spheres.",
+    )
+    basis_group.add_argument(
+        "--max_boundary_mismatch",
+        type=float,
+        default=1e-3,
+        metavar="FLOAT",
+        help="Basis sanity check: max allowed mismatch at muffin-tin boundaries.",
+    )
+
     solver_group = parser.add_argument_group("DMFT / Solver Options")
-    solver_group.add_argument("--max_solver_it", type=int, default=1, metavar="INT", help="Maximum number of inner impurity solver iterations per SCF step.")
-    solver_group.add_argument("--h_max", type=int, default=3, metavar="INT", help="Solver iterations parameter (h_max).")
-    solver_group.add_argument("--save_solver_it", action="store_true", help="Save intermediate solver iterations.")
-    
+    solver_group.add_argument(
+        "--max_solver_it",
+        type=int,
+        default=1,
+        metavar="INT",
+        help="Maximum number of inner impurity solver iterations per SCF step.",
+    )
+    solver_group.add_argument(
+        "--h_max",
+        type=int,
+        default=3,
+        metavar="INT",
+        help="Solver iterations parameter (h_max).",
+    )
+    solver_group.add_argument(
+        "--save_solver_it",
+        action="store_true",
+        help="Save intermediate solver iterations.",
+    )
+
     misc_group = parser.add_argument_group("Miscellaneous Options")
-    misc_group.add_argument("--no-check_rspt", action="store_false", dest="check_rspt", help="Disable checking RSPt executable.")
-    misc_group.add_argument("--save", action="store_true", help="Save calculation state.")
+    misc_group.add_argument(
+        "--no-check_rspt",
+        action="store_false",
+        dest="check_rspt",
+        help="Disable checking RSPt executable.",
+    )
+    misc_group.add_argument(
+        "--save", action="store_true", help="Save calculation state."
+    )
     misc_group.add_argument(
         "--no-verify",
         action="store_false",
