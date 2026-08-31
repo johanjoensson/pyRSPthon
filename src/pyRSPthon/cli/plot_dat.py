@@ -131,82 +131,91 @@ def plot_dat(clusters, dataset, dat_list, e_unit, args, valid_orbitals):
             plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
 
     if orbitals_dat_3d:
-        if getattr(args, 'orbitals', None) is None:
-            # Group by blocks to avoid mashing mismatched physics
-            from collections import defaultdict
-            grouped_by_blocks = defaultdict(list)
-            for dat, cluster, orb_sel, cluster_idx in orbitals_dat_3d:
-                block_repr = tuple(tuple(b) for b in dat.blocks)
-                grouped_by_blocks[block_repr].append((dat, cluster, cluster_idx))
-                
-            for block_repr, group_dats in grouped_by_blocks.items():
-                max_blocks = len(block_repr)
-                for block_idx in range(max_blocks):
-                    n_max = len(block_repr[block_idx])
-                    if n_max == 0: continue
-                    
-                    fig_re, ax_re = plt.subplots(nrows=n_max, ncols=n_max, squeeze=False, sharex="all", sharey="all")
-                    fig_im, ax_im = plt.subplots(nrows=n_max, ncols=n_max, squeeze=False, sharex="all", sharey="all")
-
-                    for dat, cluster, cluster_idx in group_dats:
-                        block = dat.blocks[block_idx]
-                        color = f"C{cluster_idx}"
-                        
-                        for (i, orb_i), (j, orb_j) in product(enumerate(block), repeat=2):
-                            ax_re[i, j].plot(dat.w, dat.orbitals[:, orb_i, orb_j].real, color=color, label=f"{cluster}" if i==0 and j==0 else "")
-                            ax_im[i, j].plot(dat.w, dat.orbitals[:, orb_i, orb_j].imag, color=color, label=f"{cluster}" if i==0 and j==0 else "")
-                            if cluster_idx == group_dats[0][2] or not ax_re[i,j].get_title():
-                                ax_re[i, j].set_title(f"{orb_i}_{orb_j}")
-                                ax_im[i, j].set_title(f"{orb_i}_{orb_j}")
-
-                    fig_re.suptitle(f"Orbital projected {dataset} (Re) - Block {block_idx}")
-                    fig_re.supxlabel(rf"E - E$_F$ ({e_unit})")
-                    fig_re.supylabel(rf"Re{{{dataset}}}")
-                    if len(group_dats) > 1: fig_re.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
-                    
-                    fig_im.suptitle(f"Orbital projected {dataset} (Im) - Block {block_idx}")
-                    fig_im.supxlabel(rf"E - E$_F$ ({e_unit})")
-                    fig_im.supylabel(rf"Im{{{dataset}}}")
-                    if len(group_dats) > 1: fig_im.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
-        else:
-            # Using --orbitals selection
-            # Just extract the physical TRACE for grouped elements to prevent physical nonsense
-            parsed_selections = []
-            for dat, cluster, orb_sel, cluster_idx in orbitals_dat_3d:
-                norb = dat.orbitals.shape[1]
+        from collections import defaultdict
+        import copy
+        import warnings
+        grouped_by_blocks = defaultdict(list)
+        
+        # Apply transformation if --orbitals is provided
+        transformed_dats = []
+        for dat, cluster, orb_sel, cluster_idx in orbitals_dat_3d:
+            dat_copy = copy.deepcopy(dat)
+            selection_signature = None
+            if orb_sel is not None:
+                norb = dat_copy.orbitals.shape[1]
                 try:
                     selection = parse_orbital_selection(orb_sel, norb)
-                    parsed_selections.append((dat, cluster, cluster_idx, selection))
+                    selection_signature = tuple(tuple(g) for g in selection)
+                    
+                    # Create transformation matrix T
+                    n_new = len(selection)
+                    T = np.zeros((n_new, norb), dtype=float)
+                    for i_new, group in enumerate(selection):
+                        for idx in group:
+                            T[i_new, idx] = 1.0
+                    
+                    # Apply transformation G_new = T @ G @ T.T
+                    dat_copy.orbitals = np.einsum('ai, wij, bj -> wab', T, dat_copy.orbitals, T)
+                    # Create a single block for the new orbitals
+                    dat_copy.blocks = [list(range(n_new))]
+                    dat_copy.auto_labels = ["+".join(str(idx) for idx in group) for group in selection]
+                    
                 except OrbitalSelectionError as e:
                     print(f"Warning: --orbitals selection invalid for {cluster} (norb={norb}): {e}. Skipping.", file=sys.stderr)
-            
-            if not parsed_selections: return
-            
-            for part_name, part_func in (("Re", np.real), ("Im", np.imag)):
-                _ = plt.figure()
-                for dat, cluster, cluster_idx, selection in parsed_selections:
-                    sel_data = []
-                    sel_labels = []
-                    for group in selection:
-                        # Extract the physical trace (sum of diagonals) for this group
-                        trace_data = np.sum([dat.orbitals[:, idx, idx] for idx in group], axis=0)
-                        sel_data.append(trace_data)
-                        sel_labels.append("+".join(str(idx) for idx in group))
-                        
-                    if getattr(args, 'orbital_labels', None):
-                        for i_lab, lab in enumerate(args.orbital_labels):
-                            if i_lab < len(sel_labels):
-                                sel_labels[i_lab] = lab
+                    continue
+            else:
+                dat_copy.auto_labels = [str(i) for i in range(dat_copy.orbitals.shape[1])]
+            transformed_dats.append((dat_copy, cluster, cluster_idx, selection_signature))
 
+        labels = getattr(args, 'orbital_labels', None)
+
+        for dat, cluster, cluster_idx, sig in transformed_dats:
+            block_repr = tuple(tuple(b) for b in dat.blocks)
+            grouped_by_blocks[(block_repr, sig)].append((dat, cluster, cluster_idx))
+
+        for (block_repr, sig), group_dats in grouped_by_blocks.items():
+            max_blocks = len(block_repr)
+            for block_idx in range(max_blocks):
+                n_max = len(block_repr[block_idx])
+                if n_max == 0: continue
+                
+                fig_re, ax_re = plt.subplots(nrows=n_max, ncols=n_max, squeeze=False, sharex="all", sharey="all")
+                fig_im, ax_im = plt.subplots(nrows=n_max, ncols=n_max, squeeze=False, sharex="all", sharey="all")
+                
+                if len(group_dats) > 1:
+                    fig_re.subplots_adjust(right=0.8)
+                    fig_im.subplots_adjust(right=0.8)
+
+                for loop_idx, (dat, cluster, cluster_idx) in enumerate(group_dats):
+                    block = dat.blocks[block_idx]
                     color = f"C{cluster_idx}"
-                    for j, (data_col, lab) in enumerate(zip(sel_data, sel_labels)):
-                        plt.plot(
-                            dat.w, part_func(data_col), color=color, linestyle=linestyles[j % len(linestyles)], label=f"{cluster}: {lab}"
-                        )
-                plt.title(f"Orbital projected {dataset} (Trace)")
-                plt.xlabel(rf"E - E$_F$ ({e_unit})")
-                plt.ylabel(f"{part_name}{{{dataset}}}")
-                plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+                    
+                    if labels and loop_idx == 0 and len(labels) != len(dat.auto_labels):
+                        print(f"Warning: --orbital-labels length ({len(labels)}) does not match number of plotted orbitals ({len(dat.auto_labels)}). Falling back to default labels for missing ones.", file=sys.stderr)
+
+                    for (i, orb_i), (j, orb_j) in product(enumerate(block), repeat=2):
+                        lbl = f"{cluster}" if i==0 and j==0 else "_nolegend_"
+                        ax_re[i, j].plot(dat.w, dat.orbitals[:, orb_i, orb_j].real, color=color, label=lbl)
+                        ax_im[i, j].plot(dat.w, dat.orbitals[:, orb_i, orb_j].imag, color=color, label=lbl)
+                        
+                        if loop_idx == 0:
+                            label_i = labels[orb_i] if labels and orb_i < len(labels) else dat.auto_labels[orb_i]
+                            label_j = labels[orb_j] if labels and orb_j < len(labels) else dat.auto_labels[orb_j]
+                            
+                            if i == 0:  # Top row -> Column titles
+                                ax_re[i, j].set_title(label_j)
+                                ax_im[i, j].set_title(label_j)
+                            if j == 0:  # Leftmost column -> Row labels
+                                ax_re[i, j].set_ylabel(label_i)
+                                ax_im[i, j].set_ylabel(label_i)
+
+                fig_re.suptitle(f"Orbital projected {dataset} (Re) - Block {block_idx}")
+                fig_re.supxlabel(rf"E - E$_F$ ({e_unit})")
+                if len(group_dats) > 1: fig_re.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+                
+                fig_im.suptitle(f"Orbital projected {dataset} (Im) - Block {block_idx}")
+                fig_im.supxlabel(rf"E - E$_F$ ({e_unit})")
+                if len(group_dats) > 1: fig_im.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
 
 
 def run(args):
