@@ -126,12 +126,14 @@ def run(args):
                     linestyle=linestyles[j % len(linestyles)],
                     label=f"{cluster}: {lab}",
                 )
-
         ax_orb.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+        fig_orb.subplots_adjust(right=0.75)
 
     ax_total.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+    fig_total.subplots_adjust(right=0.75)
     for name, (fig, ax) in figs_slj.items():
         ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+        fig.subplots_adjust(right=0.75)
         
     finish_plots(args)
 

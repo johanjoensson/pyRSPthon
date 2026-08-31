@@ -72,6 +72,7 @@ def plot_dat(clusters, dataset, dat_list, e_unit, args, valid_orbitals):
             else:
                 plt.plot(dat.w, dat.sum.real, color=color, linestyle="-", label="Total")
     plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+    plt.subplots_adjust(right=0.75)
 
     _ = plt.figure()
     plt.title(f"{dataset}")
@@ -88,6 +89,7 @@ def plot_dat(clusters, dataset, dat_list, e_unit, args, valid_orbitals):
             else:
                 plt.plot(dat.w, dat.sum.imag, color=color, linestyle="-", label="Total")
     plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+    plt.subplots_adjust(right=0.75)
 
     orbitals_dat_2d = []
     orbitals_dat_3d = []
@@ -129,20 +131,20 @@ def plot_dat(clusters, dataset, dat_list, e_unit, args, valid_orbitals):
             plt.xlabel(rf"E - E$_F$ ({e_unit})")
             plt.ylabel(f"{part_name}{{{dataset}}}")
             plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+            plt.subplots_adjust(right=0.75)
 
     if orbitals_dat_3d:
         from collections import defaultdict
-        import copy
         import warnings
+        from types import SimpleNamespace
         grouped_by_blocks = defaultdict(list)
         
         # Apply transformation if --orbitals is provided
         transformed_dats = []
         for dat, cluster, orb_sel, cluster_idx in orbitals_dat_3d:
-            dat_copy = copy.deepcopy(dat)
             selection_signature = None
             if orb_sel is not None:
-                norb = dat_copy.orbitals.shape[1]
+                norb = dat.orbitals.shape[1]
                 try:
                     selection = parse_orbital_selection(orb_sel, norb)
                     selection_signature = tuple(tuple(g) for g in selection)
@@ -155,17 +157,21 @@ def plot_dat(clusters, dataset, dat_list, e_unit, args, valid_orbitals):
                             T[i_new, idx] = 1.0
                     
                     # Apply transformation G_new = T @ G @ T.T
-                    dat_copy.orbitals = np.einsum('ai, wij, bj -> wab', T, dat_copy.orbitals, T)
+                    new_orbitals = np.einsum('ai, wij, bj -> wab', T, dat.orbitals, T)
                     # Create a single block for the new orbitals
-                    dat_copy.blocks = [list(range(n_new))]
-                    dat_copy.auto_labels = ["+".join(str(idx) for idx in group) for group in selection]
+                    new_blocks = [list(range(n_new))]
+                    new_auto_labels = ["+".join(str(idx) for idx in group) for group in selection]
                     
                 except OrbitalSelectionError as e:
                     print(f"Warning: --orbitals selection invalid for {cluster} (norb={norb}): {e}. Skipping.", file=sys.stderr)
                     continue
             else:
-                dat_copy.auto_labels = [str(i) for i in range(dat_copy.orbitals.shape[1])]
-            transformed_dats.append((dat_copy, cluster, cluster_idx, selection_signature))
+                new_orbitals = dat.orbitals
+                new_blocks = dat.blocks
+                new_auto_labels = [str(i) for i in range(dat.orbitals.shape[1])]
+                
+            dat_plot = SimpleNamespace(w=dat.w, orbitals=new_orbitals, blocks=new_blocks, auto_labels=new_auto_labels)
+            transformed_dats.append((dat_plot, cluster, cluster_idx, selection_signature))
 
         labels = getattr(args, 'orbital_labels', None)
 
@@ -183,8 +189,8 @@ def plot_dat(clusters, dataset, dat_list, e_unit, args, valid_orbitals):
                 fig_im, ax_im = plt.subplots(nrows=n_max, ncols=n_max, squeeze=False, sharex="all", sharey="all")
                 
                 if len(group_dats) > 1:
-                    fig_re.subplots_adjust(right=0.8)
-                    fig_im.subplots_adjust(right=0.8)
+                    fig_re.subplots_adjust(right=0.75)
+                    fig_im.subplots_adjust(right=0.75)
 
                 for loop_idx, (dat, cluster, cluster_idx) in enumerate(group_dats):
                     block = dat.blocks[block_idx]
