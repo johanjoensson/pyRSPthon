@@ -207,7 +207,7 @@ def check_rspt_run(h_max: int, max_boundary_mismatch: float, max_core_leakage: f
                 check_core_leakage(line.strip().split(), t, max_core_leakage)
 
 
-def follow_lines(fname: str, proc: subprocess.Popen, poll_interval: float = 0.5):
+def follow_lines(fname: str, proc: subprocess.Popen, poll_interval: float = 0.05):
     """
     Yield complete lines from fname as they are written (like tail -f).
     Stops when proc has exited and no more data is available.
@@ -305,6 +305,10 @@ def run_rspt(rspt_binary: list[str], run_prefix: list[str], check_rspt: bool, **
 
     signal.signal(signal.SIGTERM, handler)
     try:
+        try:
+            os.replace("out", "out_prev")
+        except FileNotFoundError:
+            pass
         proc = subprocess.Popen(run_prefix + rspt_binary)
         try:
             check_early_fail(proc)
