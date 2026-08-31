@@ -31,30 +31,39 @@ def detect_source(directory):
     )
 
 
-def load(args, directory=None):
+def load(
+    directory,
+    source=None,
+    num_k=None,
+    num_e=None,
+    xticks=None,
+    labels=None,
+    eV=False,
+    efermi=0.0,
+    nbands=None,
+):
     from pyRSPthon.read import bands as B
 
-    directory = directory if directory is not None else args.directory
-    source = args.source or detect_source(directory)
+    source = source or detect_source(directory)
     if source == "spectral":
         return B.read_spectral_bands(
             prefix=directory,
-            nk=args.num_k,
-            ne=args.num_e,
-            ticks=args.xticks,
-            tick_labels=args.labels,
+            nk=num_k,
+            ne=num_e,
+            ticks=xticks,
+            tick_labels=labels,
         )
     if source == "bandfiles":
         return B.read_bandfiles(prefix=directory)
     if source == "fatbands":
         return B.read_fatbands(prefix=directory)
     if source == "eigenvalues":
-        scale = B.Ry_to_eV if args.eV else 1.0
+        scale = B.Ry_to_eV if eV else 1.0
         return B.read_eigenvalues(
             fname=os.path.join(directory, "eigenvalues"),
-            reference=args.efermi,
+            reference=efermi,
             scale=scale,
-            nbands=args.nbands,
+            nbands=nbands,
         )
     raise SystemExit(f"Unknown source {source!r}")
 
@@ -63,9 +72,20 @@ def run(args):
     import matplotlib.pyplot as plt
     from pyRSPthon.cli import _bandplot as bp
 
-    bs = load(args)
+    kwargs = {
+        "source": args.source,
+        "num_k": args.num_k,
+        "num_e": args.num_e,
+        "xticks": args.xticks,
+        "labels": args.labels,
+        "eV": getattr(args, "eV", False),
+        "efermi": getattr(args, "efermi", 0.0),
+        "nbands": getattr(args, "nbands", None),
+    }
+
+    bs = load(args.directory, **kwargs)
     directories = [args.directory] + (args.compare or [])
-    structures = [bs] + [load(args, d) for d in (args.compare or [])]
+    structures = [bs] + [load(d, **kwargs) for d in (args.compare or [])]
 
     npanels = len(structures) if bs.kind == "spectral" else 1
     ncols = npanels + (1 if args.dos_panel else 0)

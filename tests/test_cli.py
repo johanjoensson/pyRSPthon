@@ -1,3 +1,4 @@
+from pyRSPthon.cli._common import OrbitalSelectionError
 import subprocess
 import sys
 
@@ -138,12 +139,12 @@ def test_parse_orbital_selection():
     assert parse_orbital_selection("+0-4", 5) == [[0, 1, 2, 3, 4]]
     # stray commas and whitespace are ignored
     assert parse_orbital_selection(" 0 , 1 ,", 5) == [[0], [1]]
-    with pytest.raises(SystemExit, match="out of range"):
+    with pytest.raises(OrbitalSelectionError, match="out of range"):
         parse_orbital_selection("0,5", 5)
-    with pytest.raises(SystemExit, match="out of range"):
+    with pytest.raises(OrbitalSelectionError, match="out of range"):
         parse_orbital_selection("-1", 5)
     for bad in ("5-2", "2-", "1-2-3", "a"):
-        with pytest.raises(SystemExit, match="Malformed"):
+        with pytest.raises(OrbitalSelectionError, match="Malformed"):
             parse_orbital_selection(bad, 5)
 
 
