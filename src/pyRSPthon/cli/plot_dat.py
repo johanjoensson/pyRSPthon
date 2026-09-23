@@ -1,4 +1,5 @@
 from pyRSPthon.cli._common import add_orbital_arguments, add_plot_arguments, cli_main
+from pyRSPthon.plot import palette
 import matplotlib.pyplot as plt
 from argparse import ArgumentParser
 from itertools import product
@@ -61,7 +62,7 @@ def plot_dat(clusters, dataset, dat_list, e_unit, args, valid_orbitals):
     plt.xlabel(rf"E - E$_F$ ({e_unit})")
     plt.ylabel(f"Re{{{dataset}}}")
     for i, (dat, cluster) in enumerate(zip(dat_list, clusters)):
-        color = f"C{i}"
+        color = palette.color(i)
         if dat.up is not None:
             plt.plot(dat.w, dat.up.real, color=color, linestyle="-", label=f"{cluster}: " + r"$\uparrow$")
             plt.plot(dat.w, dat.down.real, color=color, linestyle="--", label=f"{cluster}: " + r"$\downarrow$")
@@ -78,7 +79,7 @@ def plot_dat(clusters, dataset, dat_list, e_unit, args, valid_orbitals):
     plt.xlabel(rf"E - E$_F$ ({e_unit})")
     plt.ylabel(f"Im{{{dataset}}}")
     for i, (dat, cluster) in enumerate(zip(dat_list, clusters)):
-        color = f"C{i}"
+        color = palette.color(i)
         if dat.up is not None:
             plt.plot(dat.w, dat.up.imag, color=color, linestyle="-", label=f"{cluster}: " + r"$\uparrow$")
             plt.plot(dat.w, dat.down.imag, color=color, linestyle="--", label=f"{cluster}: " + r"$\downarrow$")
@@ -113,7 +114,7 @@ def plot_dat(clusters, dataset, dat_list, e_unit, args, valid_orbitals):
                     print(f"Warning: --orbitals selection invalid for {cluster} (norb={norb}): {e}. Skipping.", file=sys.stderr)
                     continue
 
-                color = f"C{cluster_idx}"
+                color = palette.color(cluster_idx)
                 for j, lab in enumerate(sel_labels):
                     plt.plot(
                         dat.w, part_func(sel_data[:, j]), color=color, linestyle=linestyles[j % len(linestyles)], label=f"{cluster}: {lab}"
@@ -184,7 +185,7 @@ def plot_dat(clusters, dataset, dat_list, e_unit, args, valid_orbitals):
 
                 for loop_idx, (dat, cluster, cluster_idx) in enumerate(group_dats):
                     block = dat.blocks[block_idx]
-                    color = f"C{cluster_idx}"
+                    color = palette.color(cluster_idx)
                     
                     if labels and loop_idx == 0 and len(labels) != len(dat.auto_labels):
                         print(f"Warning: --orbital-labels length ({len(labels)}) does not match number of plotted orbitals ({len(dat.auto_labels)}). Falling back to default labels for missing ones.", file=sys.stderr)

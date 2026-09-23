@@ -94,7 +94,7 @@ def plot_dos_panel(ax, directory, model):
 def run(args):
     import matplotlib.pyplot as plt
     import numpy as np
-    from pyRSPthon.plot import bands as bp
+    from pyRSPthon.plot import bands as bp, palette
     from pyRSPthon.read.bands import BandReadError
 
     directories = [args.directory] + (args.compare or [])
@@ -129,7 +129,9 @@ def run(args):
         else:
             vmin, vmax = min(float(np.min(m.total)) for m in models), top
         for ax, m, d in zip(axes, models, directories):
-            im = bp.plot_spectral(ax, m, log=args.log, vmin=vmin, vmax=vmax)
+            im = bp.plot_spectral(
+                ax, m, log=args.log, vmin=vmin, vmax=vmax, cmap=args.cmap or bp.SPECTRAL_CMAP
+            )
             bp.decorate_axes(ax, m, emin=args.emin, emax=args.emax)
             if compare:
                 ax.set_title(d)
@@ -145,7 +147,8 @@ def run(args):
                 bp.plot_lines(
                     ax,
                     m,
-                    color=bp.ORBITAL_COLORS[i % len(bp.ORBITAL_COLORS)],
+                    color=palette.color(i),
+                    linestyle=palette.linestyle(i),
                     label=d if compare else None,
                 )
             if compare:
@@ -207,6 +210,12 @@ def add_band_arguments(parser, source=True):
         help="Symmetry-point labels, one per tick including the path ends",
     )
     fmt_group.add_argument("--log", action="store_true", help="Logarithmic intensity")
+    fmt_group.add_argument(
+        "--cmap",
+        default=None,
+        metavar="NAME",
+        help="Matplotlib colormap for intensity plots (default: YlGnBu)",
+    )
 
 
 def build_parser():

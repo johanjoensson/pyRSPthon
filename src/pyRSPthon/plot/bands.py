@@ -6,20 +6,10 @@ All functions draw onto a given matplotlib Axes and never modify the model.
 
 import numpy as np
 
-# Colorblind-safe categorical colors (Okabe-Ito), assigned to orbitals in
-# fixed order.
-ORBITAL_COLORS = [
-    "#0072B2",  # blue
-    "#E69F00",  # orange
-    "#009E73",  # green
-    "#D55E00",  # vermillion
-    "#CC79A7",  # purple-pink
-    "#56B4E9",  # sky blue
-    "#F0E442",  # yellow
-]
+from pyRSPthon.plot.palette import CATEGORICAL, COMPOSITE, MARKERS, SPECTRAL_CMAP
 
-# Matches the palette RSPt itself puts in band.gpi (a YlGnBu-style ramp).
-SPECTRAL_CMAP = "YlGnBu"
+# Categorical colors assigned to orbitals in fixed order.
+ORBITAL_COLORS = CATEGORICAL
 
 
 def energy_label(model):
@@ -92,7 +82,7 @@ def plot_composite(ax, model, weights, colors=None, gamma=1.0):
     from matplotlib.colors import to_rgb
 
     if colors is None:
-        colors = ORBITAL_COLORS
+        colors = COMPOSITE
     weights = weights - np.min(weights)
     wmax = np.max(weights)
     if wmax > 0:
@@ -114,11 +104,11 @@ def plot_composite(ax, model, weights, colors=None, gamma=1.0):
     ax.imshow(img[::-1], extent=_image_extent(model), aspect="auto")
 
 
-def plot_lines(ax, model, color="#0072B2", linewidth=1.2, label=None):
+def plot_lines(ax, model, color=CATEGORICAL[0], linewidth=1.2, label=None, linestyle="-"):
     """
     Eigenvalue-line plot of a LineBands.
     """
-    lines = ax.plot(model.kpath.kdist, model.bands, color=color, linewidth=linewidth)
+    lines = ax.plot(model.kpath.kdist, model.bands, color=color, linewidth=linewidth, linestyle=linestyle)
     if label and lines:
         lines[0].set_label(label)
     return lines
@@ -150,6 +140,7 @@ def plot_fatbands(ax, model, columns=None, labels=None, scale=30.0, colors=None)
             energies,
             s=scale * w[..., i].ravel() / wmax,
             color=colors[i % len(colors)],
+            marker=MARKERS[i % len(MARKERS)],
             label=lab,
             alpha=0.7,
             edgecolors="none",

@@ -1,8 +1,9 @@
 from argparse import ArgumentParser
 
 from pyRSPthon.cli._common import add_orbital_arguments, add_plot_arguments, cli_main, finish_plots
+from pyRSPthon.plot import palette
 
-linestyles = ["-", "--", ":", "-."]
+linestyles = palette.LINESTYLES
 
 
 def run(args):
@@ -43,7 +44,7 @@ def run(args):
     ax_total.set_ylabel(rf"pDOS ({e_unit}$^{{-1}}$)")
 
     for i, (dos, cluster) in enumerate(zip(dos_list, valid_clusters)):
-        color = f"C{i}"
+        color = palette.color(i)
         if dos.up is not None:
             ax_total.plot(dos.w, dos.up, color=color, linestyle="-", label=f"{cluster}: " + r"$\uparrow$")
             ax_total.plot(dos.w, dos.down, color=color, linestyle="--", label=f"{cluster}: " + r"$\downarrow$")
@@ -65,7 +66,7 @@ def run(args):
             for i, (dos, cluster) in enumerate(zip(dos_list, valid_clusters)):
                 data = getattr(dos, attr)
                 if data is None: continue
-                color = f"C{i}"
+                color = palette.color(i)
                 for j, sub in enumerate("xyz"):
                     ax.plot(
                         dos.w, data[:, j], color=color, linestyle=linestyles[j % len(linestyles)], label=rf"{cluster}: {name}$_{sub}$"
@@ -102,7 +103,7 @@ def run(args):
                 print(f"Warning: --orbitals selection invalid for {cluster} (norb={norb}): {e}. Skipping.", file=sys.stderr)
                 continue
 
-            color = f"C{cluster_idx}"
+            color = palette.color(cluster_idx)
             for j, lab in enumerate(sel_labels):
                 ax_orb.plot(
                     dos.w,

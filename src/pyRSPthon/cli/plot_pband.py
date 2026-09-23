@@ -35,19 +35,22 @@ def run(args):
         weights, labels = proj.weights, list(layout.labels)
     weights, sel_labels = select_orbitals(weights, labels, args.orbitals, args.orbital_labels)
 
+    cmap = args.cmap or bp.SPECTRAL_CMAP
+
     # Total spectral weight
     fig, ax = plt.subplots()
-    im = bp.plot_spectral(ax, model, log=args.log)
+    im = bp.plot_spectral(ax, model, log=args.log, cmap=cmap)
     bp.decorate_axes(ax, model, emin=args.emin, emax=args.emax)
     ax.set_title(f"{args.cluster}: total")
     fig.colorbar(im, ax=ax, pad=0.02)
 
     if args.composite:
-        if len(sel_labels) > len(bp.ORBITAL_COLORS):
+        if len(sel_labels) > len(bp.COMPOSITE):
             print(
-                f"warning: {len(sel_labels)} orbitals share {len(bp.ORBITAL_COLORS)} "
+                f"warning: {len(sel_labels)} orbitals share {len(bp.COMPOSITE)} "
                 "composite colours, so some are indistinguishable; reduce them "
-                "with --spin-sum or --orbitals",
+                "with --spin-sum or --orbitals, or drop --composite for one "
+                "panel per orbital",
                 file=sys.stderr,
             )
         fig, ax = plt.subplots()
@@ -55,7 +58,7 @@ def run(args):
         bp.decorate_axes(ax, model, emin=args.emin, emax=args.emax)
         ax.set_title(f"{args.cluster}: orbital character")
         patches = [
-            mpatches.Patch(color=bp.ORBITAL_COLORS[i % len(bp.ORBITAL_COLORS)], label=lab)
+            mpatches.Patch(color=bp.COMPOSITE[i % len(bp.COMPOSITE)], label=lab)
             for i, lab in enumerate(sel_labels)
         ]
         ax.legend(
@@ -67,7 +70,7 @@ def run(args):
     else:
         for i, lab in enumerate(sel_labels):
             fig, ax = plt.subplots()
-            im = bp.plot_spectral(ax, model, data=weights[:, :, i], log=args.log)
+            im = bp.plot_spectral(ax, model, data=weights[:, :, i], log=args.log, cmap=cmap)
             bp.decorate_axes(ax, model, emin=args.emin, emax=args.emax)
             ax.set_title(f"{args.cluster}: {lab}")
             fig.colorbar(im, ax=ax, pad=0.02)
