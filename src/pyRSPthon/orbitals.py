@@ -8,6 +8,8 @@ per correlated shell, a spin-down block followed by that shell's spin-up
 block, shells concatenated in header order.
 """
 
+from dataclasses import dataclass
+
 # Real-harmonic orbital names per l channel, in RSPt's m = -l..l order.
 ORBITAL_NAMES = {
     1: ["s"],
@@ -221,3 +223,186 @@ def find_cluster_shells(cluster, directory="."):
             shells = [{"type": o.t, "l": o.l, "basis": o.basis} for o in corr]
             return shells, cl.cf
     return None, False
+
+
+JJ_BASES = (9, 10, 11)
+
+
+class OrbitalSelectionError(ValueError):
+    """A malformed or out-of-range orbital selection."""
+
+
+def parse_orbital_selection(spec, norb):
+    """
+    Parse an orbital selection like "0,2,4", "0-4" or "0+1,3-5" into a list
+    of index groups. Comma-separated entries plot separately (a range gives
+    one entry per index); '+'-joined indices/ranges form one summed group.
+    With spec None every orbital is its own group.
+    """
+    if spec is None:
+        return [[i] for i in range(norb)]
+
+    def expand(token):
+        token = token.strip()
+        if "-" in token and not token.startswith("-"):
+            lo, hi = (int(s) for s in token.split("-", 1))
+            if hi < lo:
+                raise ValueError(f"empty range {token!r}")
+            return list(range(lo, hi + 1))
+        return [int(token)]
+
+    picked = []
+    for part in spec.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            if "+" in part:
+                group = []
+                for sub in part.split("+"):
+                    if sub.strip():
+                        group.extend(expand(sub))
+                if group:
+                    picked.append(group)
+            else:
+                picked.extend([i] for i in expand(part))
+        except ValueError:
+            raise OrbitalSelectionError(
+                f"Malformed orbital selection {part!r} "
+                '(expected e.g. "0,2,4", "0-4" or "0+1+2")'
+            )
+    bad = sorted({i for group in picked for i in group if i < 0 or i >= norb})
+    if bad:
+        raise OrbitalSelectionError(f"Orbital indices {bad} out of range (0..{norb - 1})")
+    return picked
+
+
+def projected_orbital_count(shells):
+    """
+    Total number of projected orbital columns RSPt writes for a cluster with
+    these shells: both spin blocks of each ordinary shell, or the single
+    4l+2 block of a jj shell. The Cf flag is a square rotation of this
+    space, so it does not change the count. None when shells are unknown.
+    """
+    if not shells:
+        return None
+    total = 0
+    for sh in shells:
+        n = shell_orbital_count(sh["basis"], sh["l"])
+        total += n if sh["basis"] in JJ_BASES else 2 * n
+    return total
+
+
+@dataclass(frozen=True)
+class Layout:
+    """
+    How the norb projected orbital columns of a cluster are organised.
+
+    labels: one default label per column.
+    spin_pairs: (down_idx, up_idx) column pairs that --spin-sum adds, or
+        None when the columns cannot be summed over spin.
+    no_spin_sum_reason: why spin_pairs is None (for the error message).
+    """
+
+    labels: tuple
+    spin_pairs: tuple | None
+    no_spin_sum_reason: str | None = None
+    shells: tuple | None = None
+    cfflag: bool = False
+
+
+def resolve_layout(shells, cfflag, fullrel, norb, irrep=None):
+    """
+    Work out the column layout of norb projected orbitals from the cluster's
+    shells (Band_header or green.inp), its Cf flag and whether the run is
+    fully relativistic. RSPt writes each ordinary shell as a spin-down block
+    followed by its spin-up block; jj bases (9/10/11) are one block holding
+    both j manifolds; with the Cf flag the whole cluster is one unit of
+    rotated crystal-field states, all spin-down then all spin-up (or mixed
+    spinors, which are not spin pairs, when fully relativistic). An irrep
+    file (spectrum Cf flag) holds one block of those states, which is a
+    single spin channel or mixed spinors, never down/up pairs.
+    """
+    if irrep is not None:
+        labels = [f"irr{irrep} state {i + 1}" for i in range(norb)]
+        reason = (
+            f"irrep block {irrep} holds crystal-field states of one spin channel "
+            "(or mixed spinors), not spin-down/spin-up pairs"
+        )
+        return Layout(tuple(labels), None, reason, tuple(shells) if shells else None, True)
+    shells = tuple(shells) if shells else None
+    jj = sorted({sh["basis"] for sh in shells or ()} & set(JJ_BASES))
+    reason = None
+    if jj:
+        reason = (
+            f"a JJ basis (basis={jj}) holds both j-manifolds in one block; "
+            "summing over spin would mix distinct j states"
+        )
+    elif cfflag and fullrel:
+        reason = (
+            "fully relativistic crystal-field (Cf) states are mixed spinors, "
+            "not spin-down/spin-up pairs"
+        )
+    elif norb % 2:
+        reason = f"{norb} orbital columns cannot be split into spin pairs"
+
+    spin_split = reason is None
+    spin_pairs = None
+    if spin_split and cfflag:
+        # a Cf cluster is one unit: all its spin-down states, then all spin-up
+        half = norb // 2
+        spin_pairs = (tuple(range(half)), tuple(range(half, norb)))
+    elif spin_split:
+        split = spin_split_indices(shells)
+        if split is not None and len(split[0]) + len(split[1]) == norb:
+            spin_pairs = (tuple(split[0]), tuple(split[1]))
+        else:
+            half = norb // 2
+            spin_pairs = (tuple(range(half)), tuple(range(half, norb)))
+
+    labels = shell_labels(shells, norb, spin_split=spin_split, cfflag=cfflag)
+    if len(labels) != norb:
+        labels = orbital_labels(norb, spin_split=spin_split)
+    return Layout(tuple(labels), spin_pairs, reason, shells, bool(cfflag))
+
+
+def spin_sum(weights, layout):
+    """
+    Add the spin-down and spin-up orbital columns (last axis of weights).
+    Returns (summed_weights, labels). Raises OrbitalSelectionError when the
+    layout has no spin pairs.
+    """
+    if layout.spin_pairs is None:
+        raise OrbitalSelectionError(f"--spin-sum is not possible: {layout.no_spin_sum_reason}")
+    down_idx, up_idx = (list(idx) for idx in layout.spin_pairs)
+    summed = weights[..., down_idx] + weights[..., up_idx]
+    half = summed.shape[-1]
+    labels = shell_labels(layout.shells, half, spin_split=False, cfflag=layout.cfflag)
+    if len(labels) != half:
+        labels = orbital_labels(half)
+    return summed, list(labels)
+
+
+def select_orbitals(weights, labels, spec, label_overrides=None):
+    """
+    Pick (and sum) orbital columns along the last axis of weights according
+    to an orbital selection string (see parse_orbital_selection). Returns
+    (selected_weights, selected_labels) with one column per selection group;
+    label_overrides replace the leading labels.
+    """
+    import numpy as np
+
+    norb = weights.shape[-1]
+    groups = parse_orbital_selection(spec, norb)
+
+    def label(i):
+        return labels[i] if i < len(labels) else f"orb {i}"
+
+    columns = [weights[..., group].sum(axis=-1) for group in groups]
+    sel_labels = [" + ".join(label(i) for i in group) for group in groups]
+    for i, lab in enumerate(label_overrides or ()):
+        if i < len(sel_labels):
+            sel_labels[i] = lab
+    if not columns:
+        return weights[..., :0], []
+    return np.stack(columns, axis=-1), sel_labels

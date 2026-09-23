@@ -1,11 +1,15 @@
-class OrbitalSelectionError(Exception):
-    pass
-
 """
 Shared command line options and figure handling for the plot tools.
 """
 
+import sys
+
 import matplotlib
+
+from pyRSPthon.read import extract_dos, extract_pdos, green
+from pyRSPthon.read import read as read_dat
+from pyRSPthon.orbitals import OrbitalSelectionError
+from pyRSPthon.units import RY_TO_EV
 
 
 def add_plot_arguments(parser, cluster=False, multiple_clusters=False):
@@ -94,57 +98,47 @@ def finish_plots(args):
         plt.savefig(fname, bbox_inches="tight")
         print(f"Wrote {fname}")
 
-def parse_orbital_selection(spec, norb):
+def add_orbital_arguments(parser, multiple=False):
     """
-    Parse an orbital selection like "0,2,4", "0-4" or "0+1,3-5" into a list
-    of index groups. Comma-separated entries plot separately (a range gives
-    one entry per index); '+'-joined indices/ranges form one summed group.
-    With spec None every orbital is its own group.
+    The orbital selection options shared by the projected plot CLIs. With
+    multiple, --orbitals takes one selection per cluster.
     """
-    if spec is None:
-        return [[i] for i in range(norb)]
+    group = parser.add_argument_group("Orbital Options")
+    group.add_argument(
+        "--orbitals",
+        default=None,
+        type=str,
+        nargs="+" if multiple else None,
+        help='Orbitals to plot, e.g. "0,2,4", "0-4" or "0+1+2" (summed); '
+        "default: all" + (" (one selection, or one per cluster)" if multiple else ""),
+    )
+    group.add_argument(
+        "--orbital-labels",
+        default=None,
+        type=str,
+        nargs="+",
+        help="Override the automatic orbital labels",
+    )
 
-    def expand(token):
-        token = token.strip()
-        if "-" in token and not token.startswith("-"):
-            lo, hi = (int(s) for s in token.split("-", 1))
-            if hi < lo:
-                raise ValueError(f"empty range {token!r}")
-            return list(range(lo, hi + 1))
-        return [int(token)]
 
-    picked = []
-    for part in spec.split(","):
-        part = part.strip()
-        if not part:
-            continue
-        try:
-            if "+" in part:
-                group = []
-                for sub in part.split("+"):
-                    if sub.strip():
-                        group.extend(expand(sub))
-                if group:
-                    picked.append(group)
-            else:
-                picked.extend([i] for i in expand(part))
-        except ValueError:
-            raise OrbitalSelectionError(
-                f"Malformed orbital selection {part!r} "
-                '(expected e.g. "0,2,4", "0-4" or "0+1+2")'
-            )
-    bad = sorted({i for group in picked for i in group if i < 0 or i >= norb})
-    if bad:
-        raise OrbitalSelectionError(f"Orbital indices {bad} out of range (0..{norb - 1})")
-    return picked
+def cli_main(parser, run):
+    """
+    Parse the arguments, apply the plot style and run. Errors in the input
+    data (unreadable or inconsistent files, bad selections) are reported as
+    one line on stderr with exit status 1 instead of a traceback; anything
+    else is a bug and keeps its traceback.
+    """
+    from pyRSPthon.read.bands import BandReadError
 
-import sys
-import numpy as np
-from pyRSPthon.read import extract_pdos, extract_dos
-from pyRSPthon.read import read as read_dat
-from pyRSPthon.read import green
+    args = parser.parse_args()
+    apply_plot_style(args)
+    try:
+        run(args)
+    except (BandReadError, OrbitalSelectionError, OSError) as err:
+        print(f"{parser.prog}: error: {err}", file=sys.stderr)
+        sys.exit(1)
 
-RY_TO_EV = 13.605693122994
+
 
 def resolve_energy_unit(directory, args_eV):
     native_eV = False
@@ -170,29 +164,21 @@ def resolve_energy_unit(directory, args_eV):
     return e_unit, conversion_factor
 
 def apply_unit_conversion(dat_obj, factor, is_dos=False, data_type=None):
+    """
+    Return a copy of a DOS/dat namedtuple with its energies scaled by factor
+    and its data scaled accordingly: sig, hyb and pt carry units of energy,
+    everything else (dos, pdos, Green's functions) units of 1/energy.
+    """
     if factor == 1.0:
-        return
-    # Energy scales by factor
-    dat_obj.w = dat_obj.w * factor
-    
-    # Identify y-axis scaling
-    # sig (self-energy), hyb (hybridization), and pt (perturbation theory) have units of Energy
-    # dos, pdos, grn (Green's function) have units of 1/Energy
-    if data_type in ["sig", "hyb", "pt"]:
-        y_factor = factor
-    else:
-        y_factor = 1.0 / factor
-
-    if dat_obj.sum is not None: dat_obj.sum = dat_obj.sum * y_factor
-    if dat_obj.up is not None: dat_obj.up = dat_obj.up * y_factor
-    if getattr(dat_obj, 'down', None) is not None: dat_obj.down = dat_obj.down * y_factor
-    if getattr(dat_obj, 'orbitals', None) is not None: dat_obj.orbitals = dat_obj.orbitals * y_factor
-    
-    if is_dos:
-        for attr in ['s', 'l', 'j']:
-            val = getattr(dat_obj, attr, None)
-            if val is not None:
-                setattr(dat_obj, attr, val * y_factor)
+        return dat_obj
+    y_factor = factor if data_type in ["sig", "hyb", "pt"] else 1.0 / factor
+    scaled = ["sum", "up", "down", "orbitals"] + (["s", "l", "j"] if is_dos else [])
+    changes = {"w": dat_obj.w * factor}
+    for attr in scaled:
+        val = getattr(dat_obj, attr, None)
+        if val is not None:
+            changes[attr] = val * y_factor
+    return dat_obj._replace(**changes)
 
 def prepare_plot_data(clusters, directory, orbitals_arg, data_type="pdos"):
     valid_data = []
@@ -203,8 +189,10 @@ def prepare_plot_data(clusters, directory, orbitals_arg, data_type="pdos"):
     if len(orb_list) == 1:
         orb_list = orb_list * len(clusters)
     elif len(orb_list) != len(clusters):
-        print("Error: --orbitals must have 1 argument or one for each cluster.", file=sys.stderr)
-        sys.exit(1)
+        raise OrbitalSelectionError(
+            f"--orbitals takes one selection or one per cluster ({len(clusters)}), "
+            f"got {len(orb_list)}"
+        )
 
     for cluster, orb_sel in zip(clusters, orb_list):
         try:
@@ -223,8 +211,7 @@ def prepare_plot_data(clusters, directory, orbitals_arg, data_type="pdos"):
 def extract_true_total_dos(directory, conversion_factor):
     try:
         dos_total = extract_dos(prefix=directory)
-        apply_unit_conversion(dos_total, conversion_factor, is_dos=True, data_type="dos")
-        return dos_total
+        return apply_unit_conversion(dos_total, conversion_factor, is_dos=True, data_type="dos")
     except (FileNotFoundError, ValueError, RuntimeError):
         return None
 

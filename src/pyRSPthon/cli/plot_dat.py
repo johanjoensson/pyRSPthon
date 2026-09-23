@@ -1,5 +1,4 @@
-from pyRSPthon.read import read, green
-from pyRSPthon.cli._common import add_plot_arguments, apply_plot_style, finish_plots
+from pyRSPthon.cli._common import add_orbital_arguments, add_plot_arguments, cli_main
 import matplotlib.pyplot as plt
 from argparse import ArgumentParser
 from itertools import product
@@ -53,7 +52,7 @@ def plot_dos(dos, e_unit):
 def plot_dat(clusters, dataset, dat_list, e_unit, args, valid_orbitals):
     import numpy as np
     import sys
-    from pyRSPthon.cli._common import parse_orbital_selection, OrbitalSelectionError
+    from pyRSPthon.orbitals import OrbitalSelectionError, parse_orbital_selection, select_orbitals
 
     multi = len(clusters) > 1
 
@@ -107,25 +106,17 @@ def plot_dat(clusters, dataset, dat_list, e_unit, args, valid_orbitals):
             for dat, cluster, orb_sel, cluster_idx in orbitals_dat_2d:
                 norb = dat.orbitals.shape[1]
                 try:
-                    selection = parse_orbital_selection(orb_sel, norb)
+                    sel_data, sel_labels = select_orbitals(
+                        dat.orbitals, [str(i) for i in range(norb)], orb_sel, args.orbital_labels
+                    )
                 except OrbitalSelectionError as e:
                     print(f"Warning: --orbitals selection invalid for {cluster} (norb={norb}): {e}. Skipping.", file=sys.stderr)
                     continue
-                
-                sel_data = []
-                sel_labels = []
-                for group in selection:
-                    sel_data.append(np.sum(dat.orbitals[:, group], axis=1))
-                    sel_labels.append("+".join(str(idx) for idx in group))
-                if args.orbital_labels:
-                    for i_lab, lab in enumerate(args.orbital_labels):
-                        if i_lab < len(sel_labels):
-                            sel_labels[i_lab] = lab
-                            
+
                 color = f"C{cluster_idx}"
-                for j, (data_col, lab) in enumerate(zip(sel_data, sel_labels)):
+                for j, lab in enumerate(sel_labels):
                     plt.plot(
-                        dat.w, part_func(data_col), color=color, linestyle=linestyles[j % len(linestyles)], label=f"{cluster}: {lab}"
+                        dat.w, part_func(sel_data[:, j]), color=color, linestyle=linestyles[j % len(linestyles)], label=f"{cluster}: {lab}"
                     )
             plt.title(f"Orbital projected {dataset} (2D Diagonal)")
             plt.xlabel(rf"E - E$_F$ ({e_unit})")
@@ -135,7 +126,6 @@ def plot_dat(clusters, dataset, dat_list, e_unit, args, valid_orbitals):
 
     if orbitals_dat_3d:
         from collections import defaultdict
-        import warnings
         from types import SimpleNamespace
         grouped_by_blocks = defaultdict(list)
         
@@ -226,16 +216,14 @@ def plot_dat(clusters, dataset, dat_list, e_unit, args, valid_orbitals):
 
 def run(args):
     from pyRSPthon.cli._common import finish_plots, resolve_energy_unit, apply_unit_conversion, prepare_plot_data
-    import sys
-    
+
     e_unit, conversion_factor = resolve_energy_unit(args.directory, getattr(args, 'eV', False))
 
     if args.data.lower() == "dos":
         # dos doesn't have clusters, but we use the helper to load it
         from pyRSPthon.read import read as read_dat
-        from pyRSPthon.cli.plot_dat import plot_dos
         dat = read_dat(f"{args.directory}/dos.dat")
-        apply_unit_conversion(dat, conversion_factor, is_dos=True, data_type="dos")
+        dat = apply_unit_conversion(dat, conversion_factor, is_dos=True, data_type="dos")
         plot_dos(dat, e_unit)
     elif args.data.lower() == "pdos":
         from pyRSPthon.cli import plot_pdos
@@ -243,8 +231,10 @@ def run(args):
         return
     else:
         dat_list, valid_clusters, valid_orbitals = prepare_plot_data(args.cluster, args.directory, getattr(args, 'orbitals', None), data_type=args.data)
-        for d in dat_list:
+        dat_list = [
             apply_unit_conversion(d, conversion_factor, is_dos=False, data_type=args.data)
+            for d in dat_list
+        ]
             
         if dat_list:
             plot_dat(valid_clusters, args.data, dat_list, e_unit, args, valid_orbitals)
@@ -258,23 +248,8 @@ def main():
     add_plot_arguments(parser, cluster=True, multiple_clusters=True)
     parser.add_argument("data", type=str, help="Dataset to plot (dos, pdos, hyb, ...)")
     parser.add_argument("--eV", action="store_true", help="Unit of energy is eV.")
-    parser.add_argument(
-        "--orbitals",
-        default=None,
-        type=str,
-        nargs="+",
-        help='Orbitals to plot, e.g. "0,2,4", "0-4", or "0+1+2" (default: all)',
-    )
-    parser.add_argument(
-        "--orbital-labels",
-        default=None,
-        type=str,
-        nargs="+",
-        help="Override the automatic orbital labels",
-    )
-    args = parser.parse_args()
-    apply_plot_style(args)
-    run(args)
+    add_orbital_arguments(parser, multiple=True)
+    cli_main(parser, run)
 
 
 if __name__ == "__main__":

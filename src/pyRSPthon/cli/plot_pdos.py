@@ -1,6 +1,6 @@
 from argparse import ArgumentParser
 
-from pyRSPthon.cli._common import add_plot_arguments, apply_plot_style, finish_plots
+from pyRSPthon.cli._common import add_orbital_arguments, add_plot_arguments, cli_main, finish_plots
 
 linestyles = ["-", "--", ":", "-."]
 
@@ -8,10 +8,13 @@ linestyles = ["-", "--", ":", "-."]
 def run(args):
     import matplotlib.pyplot as plt
     import sys
-    import numpy as np
-    from pyRSPthon.cli._common import parse_orbital_selection, OrbitalSelectionError
     from pyRSPthon.cli._common import resolve_energy_unit, apply_unit_conversion, prepare_plot_data, extract_true_total_dos
-    from pyRSPthon.cli import _bandplot as bp
+    from pyRSPthon.orbitals import (
+        OrbitalSelectionError,
+        find_cluster_shells,
+        select_orbitals,
+        shell_labels,
+    )
 
     multi = len(args.cluster) > 1
 
@@ -22,8 +25,10 @@ def run(args):
     if not dos_list:
         return
         
-    for d in dos_list:
+    dos_list = [
         apply_unit_conversion(d, conversion_factor, is_dos=True, data_type="pdos")
+        for d in dos_list
+    ]
 
     true_total_dos = extract_true_total_dos(args.directory, conversion_factor)
 
@@ -78,50 +83,30 @@ def run(args):
         
         for dos, cluster, orb_sel, cluster_idx in orbitals_dos:
             norb = dos.orbitals.shape[1]
-            try:
-                selection = parse_orbital_selection(orb_sel, norb)
-            except OrbitalSelectionError as e:
-                print(f"Warning: --orbitals selection invalid for {cluster} (norb={norb}): {e}. Skipping.", file=sys.stderr)
-                continue
-                
             labels = [f"Orbital {idx}" for idx in range(norb)]
-            shells, cfflag = bp.find_cluster_shells(cluster, args.directory)
+            shells, cfflag = find_cluster_shells(cluster, args.directory)
             if shells:
                 spin_guess = dos.up is not None
                 for spin_split in (spin_guess, not spin_guess):
-                    candidate = bp.shell_labels(
+                    candidate = shell_labels(
                         shells, norb, spin_split=spin_split, cfflag=cfflag
                     )
                     if len(candidate) == norb:
                         labels = candidate
                         break
+            try:
+                sel_data, sel_labels = select_orbitals(
+                    dos.orbitals, labels, orb_sel, args.orbital_labels
+                )
+            except OrbitalSelectionError as e:
+                print(f"Warning: --orbitals selection invalid for {cluster} (norb={norb}): {e}. Skipping.", file=sys.stderr)
+                continue
 
-            sel_data = []
-            sel_labels = []
-            for j, group in enumerate(selection):
-                valid_group = [idx for idx in group if idx < norb]
-                if not valid_group: continue
-                
-                if len(valid_group) == 1:
-                    idx = valid_group[0]
-                    sel_data.append(dos.orbitals[:, idx])
-                    sel_labels.append(labels[idx] if idx < len(labels) else f"Orbital {idx}")
-                else:
-                    summed = np.sum(dos.orbitals[:, valid_group], axis=1)
-                    sel_data.append(summed)
-                    group_labels = [labels[idx] if idx < len(labels) else f"Orbital {idx}" for idx in valid_group]
-                    sel_labels.append(" + ".join(group_labels))
-                    
-            if args.orbital_labels:
-                for j, lab in enumerate(args.orbital_labels):
-                    if j < len(sel_labels):
-                        sel_labels[j] = lab
-                        
             color = f"C{cluster_idx}"
-            for j, (data_col, lab) in enumerate(zip(sel_data, sel_labels)):
+            for j, lab in enumerate(sel_labels):
                 ax_orb.plot(
                     dos.w,
-                    data_col,
+                    sel_data[:, j],
                     color=color,
                     linestyle=linestyles[j % len(linestyles)],
                     label=f"{cluster}: {lab}",
@@ -139,25 +124,10 @@ def run(args):
 
 
 def main():
-    parser = ArgumentParser(description="Plot pdos-<cluster>.dat file")
+    parser = ArgumentParser(prog="plot_pdos", description="Plot pdos-<cluster>.dat file")
     add_plot_arguments(parser, cluster=True, multiple_clusters=True)
-    parser.add_argument(
-        "--orbitals",
-        default=None,
-        type=str,
-        nargs="+",
-        help='Orbitals to plot, e.g. "0,2,4", "0-4", or "0+1+2" (default: all)',
-    )
-    parser.add_argument(
-        "--orbital-labels",
-        default=None,
-        type=str,
-        nargs="+",
-        help="Override the automatic orbital labels",
-    )
-    args = parser.parse_args()
-    apply_plot_style(args)
-    run(args)
+    add_orbital_arguments(parser, multiple=True)
+    cli_main(parser, run)
 
 
 if __name__ == "__main__":

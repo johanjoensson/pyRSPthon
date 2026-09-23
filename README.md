@@ -43,7 +43,7 @@ Requires Python >= 3.10.
 |---|---|
 | `py_runs` | Drive RSPt SCF (and DMFT) cycles to convergence (replacement for `runs`) |
 | `plot_dos` / `plot_pdos` | Plot total / cluster-projected density of states (`dos.dat`, `pdos-*.dat`) |
-| `plot_band` / `plot_pband` | Plot (projected) band structures / spectral functions (`band.data`, `pband-*.data`, `bandfile_*`, `fatbands.*`) |
+| `plot_band` / `plot_pband` | Plot (projected) band structures / spectral functions (`band.data`, `pband-*.data`, `bandfile_*`, `fatbands.*`, `eigenvalues`) |
 | `plot_dat` | Plot DMFT real/imag datasets (`real-*.dat`, `imag-*.dat`, hybridization, self-energies, ...) |
 | `rspt_structure` | Convert any ASE-readable structure (CIF, POSCAR, ...) to `sym/symt.inp`, optionally driving `symt -all` + `stick` to a runnable calculation directory |
 | `rspt_kpts` | Generate k-point meshes (`spts`) and band paths (`spts.band`) — a non-interactive replacement for `cub`/`kpath` |

@@ -1,6 +1,6 @@
 from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
 
-from pyRSPthon.cli._common import add_plot_arguments, apply_plot_style, finish_plots
+from pyRSPthon.cli._common import add_plot_arguments, cli_main, finish_plots
 from pyRSPthon.read import extract_dos
 
 
@@ -40,9 +40,7 @@ def main():
         formatter_class=ArgumentDefaultsHelpFormatter,
     )
     add_plot_arguments(parser)
-    args = parser.parse_args()
-    apply_plot_style(args)
-    run(args)
+    cli_main(parser, run)
 
 
 if __name__ == "__main__":
